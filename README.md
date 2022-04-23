@@ -13,9 +13,9 @@ This is a Telegram Bot written in Python for mirroring files on the Internet to 
 - View Link button, extra button to open file index link in broswer instead of direct download
 - Status Pages for unlimited tasks
 - Clone status
-- Search in multiple Drive folder/TeamDrive (Recursive Search)
+- Search in multiple Drive folder/TeamDrive
 - Recursive Search (only with `root` or TeamDrive ID, folder ids will be listed with non-recursive method)
-- Multi-Search by token.pickle if exists
+- Multi-TD list by token.pickle if exists
 - Extract rar, zip and 7z splits with or without password
 - Zip file/folder with or without password
 - Use Token.pickle if file not found with Service Account for all Gdrive functions
@@ -145,7 +145,7 @@ Fill up rest of the fields. Meaning of each field is discussed below:
 - `SERVER_PORT`: Only For VPS even if `IS_VPS` is `False`, which is the **BASE_URL_OF_BOT** Port.
 - `WEB_PINCODE`: If empty or `False` means no more pincode required while qbit web selection. `Bool`
 - `QB_SEED`: If `True` QB torrent will be seeded after and while uploading until reaching specific ratio or time, edit `MaxRatio` or `GlobalMaxSeedingMinutes` or both from qbittorrent.conf (`-1` means no limit, but u can cancel manually by gid). **NOTE**: 1. Don't change `MaxRatioAction`, 2. Only works with `/qbmirror` and `/qbzipmirror`. `Bool`
-- `QB_TIMEOUT`: Timeout of dead torrents downloading with qBittorrent in seconds.
+- `TORRENT_TIMEOUT`: Timeout of dead torrents downloading with qBittorrent and Aria2c in seconds.
   - **Qbittorrent NOTE**: If your facing ram exceeded issue then set limit for `MaxConnecs` and decrease `AsyncIOThreadsCount` in qbittorrent config.
 - `TG_SPLIT_SIZE`: Size of split in bytes, leave it empty for max size `2GB`.
 - `AS_DOCUMENT`: Default Telegram file type upload. Empty or `False` means as media. `Bool`
@@ -182,8 +182,8 @@ Fill up rest of the fields. Meaning of each field is discussed below:
 
 **NOTES**
 - Old authentication changed, now we can't use bot to generate token.pickle. You need OS with a browser.
-- You should set default browser. For linux refer to this [link](https://askubuntu.com/questions/609863/what-environment-variable-should-i-use-to-set-a-default-web-browser).
 - Windows users should install python3 and pip. You can find how to install and use them from google or from this [telegraph](https://telegra.ph/Create-Telegram-Mirror-Leech-Bot-by-Deploying-App-with-Heroku-Branch-using-Github-Workflow-12-06) from [Wiszky](https://github.com/vishnoe115) tutorial.
+- You can ONLY open the generated link from local broswer.
 
 1. Visit the [Google Cloud Console](https://console.developers.google.com/apis/credentials)
 2. Go to the OAuth Consent tab, fill it, and save.
@@ -478,27 +478,27 @@ To Clone or Leech gdtot link follow these steps:
 1. Login/Register to [gdtot](https://new.gdtot.top).
 2. Copy this script and paste it in browser address bar.
    - **Note**: After pasting it check at the beginning of the script in broswer address bar if `javascript:` exists or not, if not so write it as shown below.
-   ```
+   ```javascript
    javascript:(function () {
-     const input = document.createElement('input');
-     input.value = JSON.stringify({url : window.location.href, cookie : document.cookie});
-     document.body.appendChild(input);
-     input.focus();
-     input.select();
-     var result = document.execCommand('copy');
-     document.body.removeChild(input);
+    const input = document.createElement('input');
+    COOKIE = JSON.parse(JSON.stringify({cookie : document.cookie}));
+    input.value = COOKIE['cookie'].split('crypt=')[1];
+    document.body.appendChild(input);
+    input.focus();
+    input.select();
+    var result = document.execCommand('copy');
+    document.body.removeChild(input);
      if(result)
-       alert('Cookie copied to clipboard');
+       alert('Crypt copied to clipboard');
      else
-       prompt('Failed to copy cookie. Manually copy below cookie\n\n', input.value);
+       prompt('Failed to copy Crypt. Manually copy below Crypt\n\n', input.value);
    })();
    ```
    - After pressing enter your browser will prompt a alert.
-3. Now you'll get this type of data in your clipboard
+3. Now you'll get Crypt value in your clipboard
    ```
-   {"url":"https://new.gdtot.org/","cookie":"PHPSESSID=k2xxxxxxxxxxxxxxxxxxxxj63o; crypt=NGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxWdSVT0%3D"}
-
+   NGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxWdSVT0%3D
    ```
-4. From this you have to paste value of crypt in config.env file.
+4. From this you have to paste value for **CRYPT** in config.env file.
 
 -----
