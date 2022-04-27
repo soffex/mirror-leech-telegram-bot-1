@@ -3,10 +3,10 @@ from time import time, sleep
 from pickle import load as pload, dump as pdump
 from json import loads as jsnloads
 from os import makedirs, path as ospath, listdir
-from urllib.parse import parse_qs, urlparse
 from requests.utils import quote as rquote
 from io import FileIO
 from re import search as re_search
+from urllib.parse import parse_qs, urlparse
 from random import randrange
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
@@ -20,7 +20,7 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot import parent_id, DOWNLOAD_DIR, IS_TEAM_DRIVE, INDEX_URL, USE_SERVICE_ACCOUNTS, BUTTON_FOUR_NAME, \
                 BUTTON_FOUR_URL, BUTTON_FIVE_NAME, BUTTON_FIVE_URL, BUTTON_SIX_NAME, BUTTON_SIX_URL, VIEW_LINK, \
-                DRIVES_NAMES, DRIVES_IDS, INDEX_URLS
+                DRIVES_NAMES, DRIVES_IDS, INDEX_URLS, EXTENTION_FILTER
 from bot.helper.ext_utils.telegraph_helper import telegraph
 from bot.helper.ext_utils.bot_utils import get_readable_file_size, setInterval
 from bot.helper.ext_utils.fs_utils import get_mime_type, get_path_size
@@ -97,11 +97,11 @@ class GoogleDriveHelper:
     @staticmethod
     def __getIdFromUrl(link: str):
         if "folders" in link or "file" in link:
-            regex = r"https://drive\.google\.com/(drive)?/?u?/?\d?/?(mobile)?/?(file)?(folders)?/?d?/([-\w]+)[?+]?/?(w+)?"
+            regex = r"https:\/\/drive\.google\.com\/(?:open(.*?)id\=|drive(.*?)\/folders\/|file(.*?)?\/d\/|folderview(.*?)id\=|uc(.*?)id\=)([-\w]+)"
             res = re_search(regex,link)
             if res is None:
                 raise IndexError("G-Drive ID not found.")
-            return res.group(5)
+            return res.group(6)
         parsed = urlparse(link)
         return parse_qs(parsed.query)['id'][0]
 
@@ -456,6 +456,8 @@ class GoogleDriveHelper:
             return parent_id
         new_id = None
         for item in list_dirs:
+            if item.lower().endswith(tuple(EXTENTION_FILTER)):
+                continue
             current_file_name = ospath.join(input_directory, item)
             if ospath.isdir(current_file_name):
                 current_dir_id = self.__create_directory(item, parent_id)
