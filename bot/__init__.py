@@ -114,16 +114,6 @@ AS_DOC_USERS = set()
 AS_MEDIA_USERS = set()
 EXTENTION_FILTER = set(['.torrent'])
 
-if ospath.exists('authorized_chats.txt'):
-    with open('authorized_chats.txt', 'r+') as f:
-        lines = f.readlines()
-        for line in lines:
-            AUTHORIZED_CHATS.add(int(line.split()[0]))
-if ospath.exists('sudo_users.txt'):
-    with open('sudo_users.txt', 'r+') as f:
-        lines = f.readlines()
-        for line in lines:
-            SUDO_USERS.add(int(line.split()[0]))
 try:
     aid = getConfig('AUTHORIZED_CHATS')
     aid = aid.split(' ')
@@ -356,6 +346,11 @@ except:
     BUTTON_SIX_NAME = None
     BUTTON_SIX_URL = None
 try:
+    INCOMPLETE_TASK_NOTIFIER = getConfig('INCOMPLETE_TASK_NOTIFIER')
+    INCOMPLETE_TASK_NOTIFIER = INCOMPLETE_TASK_NOTIFIER.lower() == 'true'
+except:
+    INCOMPLETE_TASK_NOTIFIER = False
+try:
     STOP_DUPLICATE = getConfig('STOP_DUPLICATE')
     STOP_DUPLICATE = STOP_DUPLICATE.lower() == 'true'
 except:
@@ -530,3 +525,4 @@ updater = tgUpdater(token=BOT_TOKEN, request_kwargs={'read_timeout': 20, 'connec
 bot = updater.bot
 dispatcher = updater.dispatcher
 job_queue = updater.job_queue
+botname = bot.username
