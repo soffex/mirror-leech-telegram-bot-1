@@ -10,7 +10,6 @@ from pathlib import PurePath
 from html import escape
 from telegram.ext import CommandHandler
 from telegram import InlineKeyboardMarkup
-from asyncio import run
 
 from bot import Interval, INDEX_URL, BUTTON_FOUR_NAME, BUTTON_FOUR_URL, BUTTON_FIVE_NAME, BUTTON_FIVE_URL, \
                 BUTTON_SIX_NAME, BUTTON_SIX_URL, VIEW_LINK, aria2, QB_SEED, dispatcher, DOWNLOAD_DIR, \
@@ -163,7 +162,7 @@ class MirrorListener:
             with download_dict_lock:
                 download_dict[self.uid] = tg_upload_status
             update_all_messages()
-            run(tg.upload())
+            tg.upload()
         else:
             size = get_path_size(up_path)
             LOGGER.info(f"Upload Name: {up_name}")
@@ -340,7 +339,7 @@ def _mirror(bot, message, isZip=False, extract=False, isQbit=False, isLeech=Fals
                     link = reply_text.strip()
             elif file.mime_type != "application/x-bittorrent" and not isQbit:
                 listener = MirrorListener(bot, message, isZip, extract, isQbit, isLeech, pswd, tag)
-                Thread(target=TelegramDownloadHelper(listener).async_starter, args=(message, f'{DOWNLOAD_DIR}{listener.uid}/', name)).start()
+                Thread(target=TelegramDownloadHelper(listener).add_download, args=(message, f'{DOWNLOAD_DIR}{listener.uid}/', name)).start()
                 if multi > 1:
                     sleep(4)
                     nextmsg = type('nextmsg', (object, ), {'chat_id': message.chat_id, 'message_id': message.reply_to_message.message_id + 1})
