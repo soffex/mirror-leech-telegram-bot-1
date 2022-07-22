@@ -4,13 +4,18 @@ from json import loads as jsnloads
 from shutil import rmtree
 from PIL import Image
 from magic import Magic
-from subprocess import run as srun, check_output
+from subprocess import run as srun, check_output, Popen
 from time import time
 from math import ceil
 from re import split as re_split, I
 
 from .exceptions import NotSupportedExtractionArchive
-from bot import aria2, app, LOGGER, DOWNLOAD_DIR, get_client, TG_SPLIT_SIZE, EQUAL_SPLITS
+from bot import aria2, app, LOGGER, DOWNLOAD_DIR, get_client, TG_SPLIT_SIZE, EQUAL_SPLITS, IS_PREMIUM_USER
+
+if IS_PREMIUM_USER:
+    MAX_SPLIT_SIZE = 4194304000
+else:
+    MAX_SPLIT_SIZE = 2097152000
 
 VIDEO_SUFFIXES = ("M4V", "MP4", "MOV", "FLV", "WMV", "3GP", "MPG", "WEBM", "MKV", "AVI")
 
@@ -101,7 +106,7 @@ def take_ss(video_file):
     duration = duration // 2
 
     status = srun(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(duration),
-                        "-i", video_file, "-vframes", "1", des_dir])
+                   "-i", video_file, "-frames:v", "1", des_dir])
 
     if status.returncode != 0 or not ospath.lexists(des_dir):
         return None
@@ -111,7 +116,7 @@ def take_ss(video_file):
 
     return des_dir
 
-def split_file(path, size, file_, dirpath, split_size, start_time=0, i=1, inLoop=False):
+def split_file(path, size, file_, dirpath, split_size, listener, start_time=0, i=1, inLoop=False):
     parts = ceil(size/TG_SPLIT_SIZE)
     if EQUAL_SPLITS and not inLoop:
         split_size = ceil(size/parts) + 1000
@@ -121,28 +126,42 @@ def split_file(path, size, file_, dirpath, split_size, start_time=0, i=1, inLoop
         while i <= parts :
             parted_name = "{}.part{}{}".format(str(base_name), str(i).zfill(3), str(extension))
             out_path = ospath.join(dirpath, parted_name)
-            srun(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(start_time),
+            listener.split_proc = Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(start_time),
                   "-i", path, "-fs", str(split_size), "-map", "0", "-map_chapters", "-1", "-c", "copy", out_path])
+            listener.split_proc.wait()
+            if listener.split_proc.returncode == -9:
+                return False
             out_size = get_path_size(out_path)
-            if out_size > 2097152000:
-                dif = out_size - 2097152000
+            if out_size > MAX_SPLIT_SIZE:
+                dif = out_size - MAX_SPLIT_SIZE
                 split_size = split_size - dif + 5000000
                 osremove(out_path)
-                return split_file(path, size, file_, dirpath, split_size, start_time, i, True)
+                return split_file(path, size, file_, dirpath, split_size, listener, start_time, i, True)
             lpd = get_media_info(out_path)[0]
-            if lpd <= 4:
+            if lpd == 0:
+                LOGGER.error(f'Something went wrong while splitting, mostly file is corrupted. Path: {path}')
+                break
+            elif lpd <= 4:
                 osremove(out_path)
                 break
             start_time += lpd - 3
             i = i + 1
     else:
         out_path = ospath.join(dirpath, file_ + ".")
-        srun(["split", "--numeric-suffixes=1", "--suffix-length=3", f"--bytes={split_size}", path, out_path])
+        listener.split_proc = Popen(["split", "--numeric-suffixes=1", "--suffix-length=3", f"--bytes={split_size}", path, out_path])
+        listener.split_proc.wait()
+        if listener.split_proc.returncode == -9:
+            return False
+    return True
 
 def get_media_info(path):
 
-    result = check_output(["ffprobe", "-hide_banner", "-loglevel", "error", "-print_format",
-                           "json", "-show_format", path]).decode('utf-8')
+    try:
+        result = check_output(["ffprobe", "-hide_banner", "-loglevel", "error", "-print_format",
+                               "json", "-show_format", path]).decode('utf-8')
+    except Exception as e:
+        LOGGER.error(f'{e}. Mostly file not found!')
+        return 0, None, None
 
     fields = jsnloads(result).get('format')
     if fields is None:

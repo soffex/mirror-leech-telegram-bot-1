@@ -73,19 +73,19 @@ class GoogleDriveHelper:
         """
         try:
             return self.uploaded_bytes / self.total_time
-        except ZeroDivisionError:
+        except:
             return 0
 
     def dspeed(self):
         try:
             return self.downloaded_bytes / self.dtotal_time
-        except ZeroDivisionError:
+        except:
             return 0
 
     def cspeed(self):
         try:
             return self.transferred_size / int(time() - self.start_time)
-        except ZeroDivisionError:
+        except:
             return 0
 
     @staticmethod
@@ -482,7 +482,7 @@ class GoogleDriveHelper:
             str = str.replace(char, '\\' + char)
         return str.strip()
 
-    def __get_recursive_list(self, file, rootid = "root"):
+    def __get_recursive_list(self, file, rootid):
         rtnlist = []
         if not rootid:
             rootid = file.get('teamDriveId')
@@ -776,10 +776,10 @@ class GoogleDriveHelper:
             meta = self.__getFileMetadata(file_id)
             path = f"{DOWNLOAD_DIR}{self.__listener.uid}/"
             if meta.get("mimeType") == self.__G_DRIVE_DIR_MIME_TYPE:
-                self.__download_folder(file_id, path, meta.get('name'))
+                self.__download_folder(file_id, path, self.name)
             else:
                 makedirs(path)
-                self.__download_file(file_id, path, meta.get('name'), meta.get('mimeType'))
+                self.__download_file(file_id, path, self.name, meta.get('mimeType'))
         except Exception as err:
             if isinstance(err, RetryError):
                 LOGGER.info(f"Total Attempts: {err.last_attempt.attempt_number}")
