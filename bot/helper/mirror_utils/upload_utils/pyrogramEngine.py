@@ -70,8 +70,11 @@ class TgUploader:
                                                          disable_web_page_preview=False, disable_notification=True)
         else:
             if IS_PREMIUM_USER:
-                self.__sent_msg = await user.get_message(chat_id=self.__listener.message.chat.id,
-                                                         message_ids=self.__listener.uid)
+                if not self.__listener.isSuperGroup:
+                    await self.__listener.onUploadError('Use SuperGroup to leech with User!')
+                    return
+                self.__sent_msg = await user.get_messages(chat_id=self.__listener.message.chat.id,
+                                                          message_ids=self.__listener.uid)
             else:
                 self.__sent_msg = self.__listener.message
 
