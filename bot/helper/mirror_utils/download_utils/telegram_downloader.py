@@ -91,7 +91,7 @@ class TelegramDownloadHelper:
     async def add_download(self, message, path, filename, from_queue=False):
         if IS_PREMIUM_USER:
             if not self.__listener.isSuperGroup:
-                await sendMessage(message, 'Use SuperGroup to leech with User!')
+                await sendMessage(message, 'Use SuperGroup to download with User!')
                 return
             message = await user.get_messages(chat_id=message.chat.id, message_ids=message.id)
         media = message.document or message.photo or message.video or message.audio or \
@@ -101,7 +101,7 @@ class TelegramDownloadHelper:
                 download = media.file_unique_id not in GLOBAL_GID
             if from_queue or download:
                 if filename == "":
-                    name = media.file_name
+                    name = media.file_name if hasattr(media, 'file_name') else 'None'
                 else:
                     name = filename
                     path = path + name

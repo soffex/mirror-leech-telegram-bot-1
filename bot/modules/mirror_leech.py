@@ -102,7 +102,10 @@ async def _mirror_leech(client, message, isZip=False, extract=False, isQbit=Fals
     pswd = mesg[0].split(' pswd: ')
     pswd = pswd[1] if len(pswd) > 1 else None
 
-    if username := message.from_user.username:
+    if len(mesg) > 1 and mesg[1].startswith('Tag: '):
+        tag, id_ = mesg[1].split('Tag: ')[1].split()
+        message.from_user = await client.get_users(id_)
+    elif username := message.from_user.username:
         tag = f"@{username}"
     else:
         tag = message.from_user.mention
@@ -124,7 +127,7 @@ async def _mirror_leech(client, message, isZip=False, extract=False, isQbit=Fals
                 reply_text = reply_to.text.split(maxsplit=1)[0].strip()
                 if is_url(reply_text) or is_magnet(reply_text):
                     link = reply_text
-            elif file_.mime_type == 'application/x-bittorrent':
+            elif reply_to.document and file_.mime_type == 'application/x-bittorrent':
                 link = await reply_to.download()
             else:
                 listener = MirrorLeechListener(message, isZip, extract, isQbit, isLeech, pswd, tag, sameDir=sameDir)
@@ -186,9 +189,6 @@ Number and m:folder_name (folder_name without space) should be always before |ne
                     __run_multi()
                     return
     __run_multi()
-
-    if len(mesg) > 1 and mesg[1].startswith('Tag:'):
-        tag = mesg[1].split('Tag: ')[1].split()[0]
 
     listener = MirrorLeechListener(message, isZip, extract, isQbit, isLeech, pswd, tag, select, seed, sameDir)
 

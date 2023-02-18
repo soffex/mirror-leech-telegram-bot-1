@@ -85,7 +85,7 @@ async def rssSub(client, message, pre_event):
             if len(inf) > 1:
                 inf = inf[1].split(' exf: ')[0].split(' c: ')[0].strip()
                 filters_list = inf.split('|')
-                for x in inf:
+                for x in filters_list:
                     y = x.split(' or ')
                     inf_lists.append(y)
             else:
@@ -93,8 +93,8 @@ async def rssSub(client, message, pre_event):
             exf = item.split(' exf: ')
             if len(exf) > 1:
                 exf = exf[1].split(' inf: ')[0].split(' c: ')[0].strip()
-                filters_list = inf.split('|')
-                for x in exf:
+                filters_list = exf.split('|')
+                for x in filters_list:
                     y = x.split(' or ')
                     exf_lists.append(y)
             else:
@@ -178,6 +178,7 @@ async def rssUpdate(client, message, pre_event, state):
             if scheduler.state == 2:
                 scheduler.resume()
             elif is_sudo and not scheduler.running:
+                addJob(config_dict['RSS_DELAY'])
                 scheduler.start()
         if is_sudo and DATABASE_URL and user_id != message.from_user.id:
             await DbManger().rss_update(user_id)
@@ -311,14 +312,14 @@ async def rssEdit(client, message, pre_event):
             if inf:
                 if inf.lower() != 'none':
                     filters_list = inf.split('|')
-                    for x in inf:
+                    for x in filters_list:
                         y = x.split(' or ')
                         inf_lists.append(y)
                 rss_dict[user_id][title]['inf'] = inf_lists
             if exf:
                 if exf.lower() != 'none':
-                    filters_list = inf.split('|')
-                    for x in exf:
+                    filters_list = exf.split('|')
+                    for x in filters_list:
                         y = x.split(' or ')
                         exf_lists.append(y)
                 rss_dict[user_id][title]['exf'] = exf_lists
@@ -508,6 +509,7 @@ Timeout: 60 sec.
             if scheduler.state == 2:
                 scheduler.resume()
             elif not scheduler.running:
+                addJob(config_dict['RSS_DELAY'])
                 scheduler.start()
             if DATABASE_URL:
                 await DbManger().rss_update_all()
@@ -543,6 +545,7 @@ Timeout: 60 sec.
     elif data[1] == 'start':
         if not scheduler.running:
             await query.answer()
+            addJob(config_dict['RSS_DELAY'])
             scheduler.start()
             await updateRssMenu(query)
         else:
@@ -550,6 +553,7 @@ Timeout: 60 sec.
 
 async def rssMonitor():
     if not config_dict['RSS_CHAT_ID']:
+        LOGGER.warning('RSS_CHAT_ID not added! Shutting down rss scheduler...')
         scheduler.shutdown(wait=False)
         return
     if len(rss_dict) == 0:
@@ -619,9 +623,11 @@ async def rssMonitor():
     if all_paused:
         scheduler.pause()
 
+def addJob(delay):
+    scheduler.add_job(rssMonitor, trigger=IntervalTrigger(seconds=delay), id='0', name='RSS', misfire_grace_time=15,
+                      max_instances=1, next_run_time=datetime.now()+timedelta(seconds=20), replace_existing=True)
 
-scheduler.add_job(rssMonitor, trigger=IntervalTrigger(seconds=RSS_DELAY), id='0', name='RSS', mnisfire_grace_time=15,
-                        max_instances=1, next_run_time=datetime.now()+timedelta(seconds=20), replace_existing=True)
+addJob(RSS_DELAY)
 scheduler.start()
 bot.add_handler(MessageHandler(getRssMenu, filters=command(BotCommands.RssCommand) & CustomFilters.authorized))
 bot.add_handler(CallbackQueryHandler(rssListener, filters=regex("^rss")))
