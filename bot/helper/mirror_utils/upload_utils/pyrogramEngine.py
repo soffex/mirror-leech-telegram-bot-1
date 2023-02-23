@@ -82,6 +82,19 @@ class TgUploader:
             up_path = new_path
         else:
             cap_mono = f"<code>{file_}</code>"
+        if len(file_) > 60:
+            ntsplit = file_.rsplit('.', 2)
+            if len(ntsplit[1]) >= 60 or len(ntsplit) == 2:
+                ntsplit = file_.rsplit('.', 1)
+                ext = ntsplit[1]
+            else:
+                ext = f"{ntsplit[1]}.{ntsplit[2]}"
+            extn = len(ext)
+            remain = 60 - extn
+            name = ntsplit[0][:remain]
+            new_path = ospath.join(dirpath, f"{name}.{ext}")
+            await aiorename(up_path, new_path)
+            up_path = new_path
         return up_path, cap_mono
 
     def __get_input_media(self, subkey, key):
@@ -127,6 +140,7 @@ class TgUploader:
                         continue
                     if self.__is_cancelled:
                         return
+                    up_path, cap_mono = await self.__prepare_file(up_path, file_, dirpath)
                     if self.__last_msg_in_group:
                         group_lists = [x for v in self.__media_dict.values() for x in v.keys()]
                         if (match := re_match(r'.+(?=\.0*\d+$)|.+(?=\.part\d+\..+)', up_path)) and match.group(0) not in group_lists:
@@ -135,15 +149,14 @@ class TgUploader:
                                     if len(msgs) > 1:
                                         await self.__send_media_group(subkey, key, msgs)
                     self.__last_msg_in_group = False
-                    up_path, cap_mono = await self.__prepare_file(up_path, file_, dirpath)
                     self._last_uploaded = 0
                     uploaded_doc = await self.__upload_file(up_path, cap_mono)
                     if self.__is_cancelled:
                         return
-                    if not self.__listener.seed or self.__listener.newDir or dirpath.endswith("splited_files_mltb"):
-                        await aioremove(uploaded_doc)
                     if not self.__is_corrupted and (self.__listener.isSuperGroup or config_dict['DUMP_CHAT']):
                         self.__msgs_dict[self.__sent_msg.link] = file_
+                    if not self.__listener.seed or self.__listener.newDir or dirpath.endswith("splited_files_mltb"):
+                        await aioremove(uploaded_doc)
                     await sleep(1)
                 except Exception as err:
                     if isinstance(err, RetryError):
@@ -239,6 +252,7 @@ class TgUploader:
                                                                     caption=cap_mono,
                                                                     disable_notification=True,
                                                                     progress=self.__upload_progress)
+
             if not self.__is_cancelled and self.__media_group and (self.__sent_msg.video or self.__sent_msg.document):
                 key = 'documents' if self.__sent_msg.document else 'videos'
                 if match := re_match(r'.+(?=\.0*\d+$)|.+(?=\.part\d+\..+)', up_path):
@@ -253,20 +267,21 @@ class TgUploader:
                     else:
                         self.__last_msg_in_group = True
 
+            if self.__thumb is None and thumb is not None and await aiopath.exists(thumb):
+                await aioremove(thumb)
             return up_path
         except FloodWait as f:
             LOGGER.warning(str(f))
             await sleep(f.value)
         except Exception as err:
+            if self.__thumb is None and thumb is not None and await aiopath.exists(thumb):
+                await aioremove(thumb)
             err_type = "RPCError: " if isinstance(err, RPCError) else ""
             LOGGER.error(f"{err_type}{err}. Path: {up_path}")
             if 'Telegram says: [400' in str(err) and key != 'documents':
                 LOGGER.error(f"Retrying As Document. Path: {up_path}")
                 return await self.__upload_file(up_path, cap_mono, True)
             raise err
-        finally:
-            if self.__thumb is None and thumb is not None and await aiopath.exists(thumb):
-                await aioremove(thumb)
 
     @property
     def speed(self):

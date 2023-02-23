@@ -15,11 +15,11 @@ from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.ext_utils.db_handler import DbManger
 from bot.helper.telegram_helper.button_build import ButtonMaker
-from bot.helper.ext_utils.bot_utils import async_to_sync_dec
-
+from bot.helper.ext_utils.bot_utils import new_task, new_thread
 
 rss_dict_lock = Lock()
 handler_dict = {}
+
 
 async def rssMenu(event):
     user_id = event.from_user.id
@@ -201,7 +201,7 @@ async def rssList(query, start, all_users=False):
     if all_users:
         list_feed = f"<b>All subscriptions | Page: {int(start/5)} </b>"
         async with rss_dict_lock:
-            keysCount = sum([len(v.keys()) for v in list(rss_dict.values())])
+            keysCount = sum(len(v.keys()) for v in list(rss_dict.values()))
             index = 0
             for titles in list(rss_dict.values()):
                 for index, (title, data) in enumerate(list(titles.items())[start:5+start]):
@@ -338,7 +338,6 @@ async def rssDelete(client, message, pre_event):
             await DbManger().rss_delete(user)
     await updateRssMenu(pre_event)
 
-@async_to_sync_dec
 async def event_handler(client, query, pfunc):
     user_id = query.from_user.id
     handler_dict[user_id] = True
@@ -353,6 +352,7 @@ async def event_handler(client, query, pfunc):
             await updateRssMenu(query)
     client.remove_handler(*handler)
 
+@new_thread
 async def rssListener(client, query):
     user_id = query.from_user.id
     message = query.message
@@ -396,7 +396,7 @@ Timeout: 60 sec.
         """
         await editMessage(message, msg, button)
         pfunc = partial(rssSub, pre_event=query)
-        event_handler(client, query, pfunc)
+        await event_handler(client, query, pfunc)
     elif data[1] == 'list':
         handler_dict[user_id] = False
         if len(rss_dict.get(int(data[2]), {})) == 0:
@@ -417,7 +417,7 @@ Timeout: 60 sec.
             button = buttons.build_menu(2)
             await editMessage(message, 'Send one title with vlaue seperated by space get last X items.\nTitle Value\nTimeout: 60 sec.', button)
             pfunc = partial(rssGet, pre_event=query)
-            event_handler(client, query, pfunc)
+            await event_handler(client, query, pfunc)
     elif data[1] in ['unsubscribe', 'pause', 'resume']:
         handler_dict[user_id] = False
         if len(rss_dict.get(int(data[2]), {})) == 0:
@@ -436,7 +436,7 @@ Timeout: 60 sec.
             button = buttons.build_menu(2)
             await editMessage(message, f'Send one or more rss titles seperated by space to {data[1]}.\nTimeout: 60 sec.', button)
             pfunc = partial(rssUpdate, pre_event=query, state=data[1])
-            event_handler(client, query, pfunc)
+            await event_handler(client, query, pfunc)
     elif data[1] == 'edit':
         handler_dict[user_id] = False
         if len(rss_dict.get(int(data[2]), {})) == 0:
@@ -456,13 +456,14 @@ Timeout: 60 sec.
             '''
             await editMessage(message, msg, button)
             pfunc = partial(rssEdit, pre_event=query)
-            event_handler(client, query, pfunc)
+            await event_handler(client, query, pfunc)
     elif data[1].startswith('uall'):
         handler_dict[user_id] = False
         if len(rss_dict.get(int(data[2]), {})) == 0:
             await query.answer(text="No subscriptions!", show_alert=True)
             return
-        elif data[1].endswith('unsub'):
+        await query.answer()
+        if data[1].endswith('unsub'):
             async with rss_dict_lock:
                 del rss_dict[int(data[2])]
             if DATABASE_URL:
@@ -482,13 +483,13 @@ Timeout: 60 sec.
                 scheduler.resume()
             if DATABASE_URL:
                 await DbManger().rss_update(int(data[2]))
-        await query.answer(text='Done!', show_alert=True)
         await updateRssMenu(query)
     elif data[1].startswith('all'):
         if len(rss_dict) == 0:
             await query.answer(text="No subscriptions!", show_alert=True)
             return
-        elif data[1].endswith('unsub'):
+        await query.answer()
+        if data[1].endswith('unsub'):
             async with rss_dict_lock:
                 rss_dict.clear()
             if DATABASE_URL:
@@ -513,7 +514,6 @@ Timeout: 60 sec.
                 scheduler.start()
             if DATABASE_URL:
                 await DbManger().rss_update_all()
-        await query.answer(text='Done!', show_alert=True)
     elif data[1] == 'deluser':
         if len(rss_dict) == 0:
             await query.answer(text="No subscriptions!", show_alert=True)
@@ -526,7 +526,7 @@ Timeout: 60 sec.
             msg = 'Send one or more user_id seperated by space to delete their resources.\nTimeout: 60 sec.'
             await editMessage(message, msg, button)
             pfunc = partial(rssDelete, pre_event=query)
-            event_handler(client, query, pfunc)
+            await event_handler(client, query, pfunc)
     elif data[1] == 'listall':
         if not rss_dict:
             await query.answer(text="No subscriptions!", show_alert=True)
@@ -609,7 +609,10 @@ async def rssMonitor():
                         feed_msg += f"<b>Link: </b><code>{url}</code>\n\n<b>Tag: </b>{data['tag']} <code>{user}</code>"
                     await sendRss(feed_msg)
                     feed_count += 1
-                    await sleep(5)
+                    try:
+                        await sleep(10)
+                    except:
+                        pass
                 async with rss_dict_lock:
                     if user not in rss_dict or not rss_dict[user].get(title, False):
                         continue
