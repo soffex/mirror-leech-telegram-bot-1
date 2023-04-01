@@ -1,4 +1,4 @@
-from asyncio import create_subprocess_exec
+from asyncio import create_subprocess_exec, Event
 from asyncio.subprocess import PIPE
 from random import SystemRandom
 from string import ascii_letters, digits
@@ -13,8 +13,9 @@ non_queued_up, queued_dl, LOGGER, GLOBAL_EXTENSION_FILTER
 from bot.helper.ext_utils.bot_utils import cmd_exec, sync_to_async, new_task
 from bot.helper.mirror_utils.status_utils.rclone_status import RcloneStatus
 from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
-from bot.helper.telegram_helper.message_utils import sendStatusMessage, update_all_messages
-from bot.helper.ext_utils.fs_utils import get_mime_type, count_files_and_folders
+from bot.helper.telegram_helper.message_utils import sendMessage, sendStatusMessage, update_all_messages
+from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
+from bot.helper.ext_utils.fs_utils import get_base_name, get_mime_type, count_files_and_folders
 
 
 class RcloneTransferHelper:
@@ -56,36 +57,53 @@ class RcloneTransferHelper:
             if data := re_findall(r'Transferred:\s+([\d.]+\s*\w+)\s+/\s+([\d.]+\s*\w+),\s+([\d.]+%)\s*,\s+([\d.]+\s*\w+/s),\s+ETA\s+([\dwdhms]+)', data):
                 self.__transferred_size, _, self.__percentage, self.__speed, self.__eta = data[0]
   
-    async def add_download(self, rc_path, config_path, path, name, from_queue=False):
+    async def add_download(self, rc_path, config_path, path, name):
         self.__is_download = True
-        if not from_queue: 
-            cmd = ['rclone', 'lsjson', '--stat', '--no-mimetype', '--no-modtime', '--config', config_path, rc_path]
-            res, err, code = await cmd_exec(cmd)
-            if self.__is_cancelled:
-                return
-            if code not in [0, -9]:
-                await self.__listener.onDownloadError(f'while getting rclone size. Path: {rc_path}. Stderr: {err[:4090]}')
-                return
-            result = loads(res)
-            if result['IsDir']:
-                if not name:
-                    name = await self.__getItemName(rc_path.strip('/'))
-                path += name
-            else:
+        cmd = ['rclone', 'lsjson', '--stat', '--no-mimetype', '--no-modtime', '--config', config_path, rc_path]
+        res, err, code = await cmd_exec(cmd)
+        if self.__is_cancelled:
+            return
+        if code not in [0, -9]:
+            await sendMessage(f'Error: While getting rclone stat. Path: {rc_path}. Stderr: {err[:4000]}')
+            return
+        result = loads(res)
+        if result['IsDir']:
+            if not name:
                 name = await self.__getItemName(rc_path.strip('/'))
+            path += name
+        else:
+            name = await self.__getItemName(rc_path.strip('/'))
         self.name = name
         cmd = ['rclone', 'size', '--fast-list', '--json', '--config', config_path, rc_path]
         res, err, code = await cmd_exec(cmd)
         if self.__is_cancelled:
             return
         if code not in [0, -9]:
-            await self.__listener.onDownloadError(f'while getting rclone size. Path: {rc_path}. Stderr: {err[:4090]}')
+            await sendMessage(f'Error: While getting rclone size. Path: {rc_path}. Stderr: {err[:4000]}')
             return
         rdict = loads(res)
         self.size = rdict['bytes']
+        if config_dict['STOP_DUPLICATE'] and not self.__listener.isLeech and self.__listener.upPath == 'gd':
+            LOGGER.info('Checking File/Folder if already in Drive')
+            if self.__listener.isZip:
+                rname = f"{name}.zip"
+            elif self.__listener.extract:
+                try:
+                    rname = get_base_name(name)
+                except:
+                    rname = None
+            else:
+                rname = name
+            if rname is not None:
+                smsg, button = await sync_to_async(GoogleDriveHelper().drive_list, rname, True)
+                if smsg:
+                    msg = "File/Folder is already available in Drive.\nHere are the search results:"
+                    await sendMessage(self.__listener.message, msg, button)
+                    return
         self.gid = ''.join(SystemRandom().choices(ascii_letters + digits, k=12))
         all_limit = config_dict['QUEUE_ALL']
         dl_limit = config_dict['QUEUE_DOWNLOAD']
+        from_queue = False
         if all_limit or dl_limit:
             added_to_queue = False
             async with queue_dict_lock:
@@ -93,14 +111,19 @@ class RcloneTransferHelper:
                 up = len(non_queued_up)
                 if (all_limit and dl + up >= all_limit and (not dl_limit or dl >= dl_limit)) or (dl_limit and dl >= dl_limit):
                     added_to_queue = True
-                    queued_dl[self.__listener.uid] = ['rcd', rc_path, config_path, path, name, self.__listener]
+                    event = Event()
+                    queued_dl[self.__listener.uid] = event
             if added_to_queue:
                 LOGGER.info(f"Added to Queue/Download: {name}")
                 async with download_dict_lock:
                     download_dict[self.__listener.uid] = QueueStatus(name, self.size, self.gid, self.__listener, 'Dl')
                 await self.__listener.onDownloadStart()
                 await sendStatusMessage(self.__listener.message)
-                return
+                await event.wait()
+                async with download_dict_lock:
+                    if self.__listener.uid not in download_dict:
+                        return
+                from_queue = True
         async with download_dict_lock:
             download_dict[self.__listener.uid] = RcloneStatus(self, self.__listener.message, 'dl')
         async with queue_dict_lock:
@@ -126,13 +149,13 @@ class RcloneTransferHelper:
         elif return_code != -9:
             error = (await self.__proc.stderr.read()).decode().strip()
             LOGGER.error(error)
-            await self.__listener.onDownloadError(error[:4090])
+            await self.__listener.onDownloadError(error[:4000])
 
     async def upload(self, path):
         async with download_dict_lock:
             download_dict[self.__listener.uid] = RcloneStatus(self, self.__listener.message, 'up')
         await update_all_messages()
-        rc_path = (self.__listener.upload or config_dict['RCLONE_PATH']).strip('/')
+        rc_path = self.__listener.upPath.strip('/')
         if rc_path == 'rc':
             rc_path = config_dict['RCLONE_PATH']
         if rc_path.startswith('mrcc:'):
@@ -212,7 +235,7 @@ class RcloneTransferHelper:
         else:
             error = (await self.__proc.stderr.read()).decode().strip()
             LOGGER.error(error)
-            await self.__listener.onUploadError(error[:4090])
+            await self.__listener.onUploadError(error[:4000])
 
     @staticmethod
     async def __getItemName(path):
