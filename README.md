@@ -37,16 +37,22 @@ In each single file there is a major change from base code, it's almost totaly d
 - Download using premium account if available
 - Download restricted messages (document or link) by tg private/public/super links
 - Custom upload destination for each task or user
+- Choose leech by bot or user session incase you have premium plan
 
 ### Google
 
-- Stop duplicates for all tasks
+- Stop duplicates for all tasks and setting for each user
 - Download from Google Drive
 - Counting Google Drive files/folders
 - Search in multiple Drive folder/TeamDrive
 - Recursive Search (only with `root` or TeamDrive ID, folder ids will be listed with non-recursive method). Based on [Sreeraj](https://github.com/SVR666) searchX-bot.
 - Use Token.pickle if file not found with Service Account, for all Gdrive functions
 - Random Service Account for each task
+- Custom upload destination for each user
+- Ability to choose token, drive and id from list with buttons
+- Token.pickle for each user
+- Default upload destination for each user
+- Index link for each user
 
 ### Status
 
@@ -74,7 +80,7 @@ In each single file there is a major change from base code, it's almost totaly d
 
 - Mongo Database support
 - Store bot settings
-- Store user settings including thumbnails and rclone config in database
+- Store user settings including thumbnails, rclone config and token.pickle in database
 - Store private files
 - Store RSS data
 - Store incompleted task messages
@@ -109,6 +115,7 @@ In each single file there is a major change from base code, it's almost totaly d
 - Rclone.conf for each user
 - Clone server-side
 - Rclone serve for combine remote to use it as index from all remotes
+- Default upload destination for each user
 
 ### Overall
 
@@ -212,7 +219,7 @@ Fill up rest of the fields. Meaning of each field is discussed below. **NOTE**: 
 
 **2. Optional Fields**
 
-- `USER_SESSION_STRING`: To download/upload from your telegram account and to send rss. To generate session string use this command `python3 generate_string_session.py` after mounting repo folder for sure. `Str`. **NOTE**: You can't use bot with private message. Use it with superGroup.
+- `USER_SESSION_STRING`: To download/upload from your telegram account if user is `PREMIUM` and to send rss. To generate session string use this command `python3 generate_string_session.py` after mounting repo folder for sure. `Str`. **NOTE**: You can't use bot with private message. Use it with superGroup.
 - `DATABASE_URL`: Your Mongo Database URL (Connection string). Follow this [Generate Database](https://github.com/anasty17/mirror-leech-telegram-bot/tree/master#generate-database) to generate database. Data will be saved in Database: auth and sudo users, users settings including thumbnails for each user, rss data and incomplete tasks. **NOTE**: You can always edit all settings that saved in database from the official site -> (Browse collections). `Str`
 - `DOWNLOAD_DIR`: The path to the local folder where the downloads should be downloaded to. `Str`
 - `CMD_SUFFIX`: commands index number. This number will added at the end all commands. `Str`|`Int`
@@ -257,6 +264,7 @@ Fill up rest of the fields. Meaning of each field is discussed below. **NOTE**: 
 - `AS_DOCUMENT`: Default type of Telegram file upload. Default is `False` mean as media. `Bool`
 - `EQUAL_SPLITS`: Split files larger than **LEECH_SPLIT_SIZE** into equal parts size (Not working with zip cmd). Default is `False`. `Bool`
 - `MEDIA_GROUP`: View Uploaded splitted file parts in media group. Default is `False`. `Bool`.
+- `USER_LEECH`: Upload/Download by user session. Default is `False`. `Bool`
 - `LEECH_FILENAME_PREFIX`: Add custom word to leeched file name. `Str`
 - `LEECH_DUMP_CHAT`: Chat ID or USERNAME to where files would be uploaded. `Int`|`Str`. **NOTE**: Only available for superGroup/channel. Add `-100` before channel/superGroup id. In short don't add bot or account id!
 
