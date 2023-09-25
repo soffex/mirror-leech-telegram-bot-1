@@ -58,7 +58,7 @@ link pswd: pass(zip/unzip) opt: ytdlpoptions up: remote2:path2
 Reply to this example by this cmd <code>/cmd</code> b(bulk)
 You can set start and end of the links from the bulk with -b start:end or only end by -b :end or only start by -b start. The default start is from zero(first link) to inf.
 
-
+Check here all supported <a href='https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md'>SITES</a>
 Check all yt-dlp api options from this <a href='https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L184'>FILE</a> or use this <a href='https://t.me/mltb_official_channel/177'>script</a> to convert cli arguments to api options.
 """
 
@@ -74,6 +74,9 @@ Note: Doesn't work with torrents.
 
 <b>Direct link authorization</b>: -au -ap
 <code>/cmd</code> link -au username -ap password
+
+<b>Direct link custom headers</b>: -h
+<code>/cmd</code> link -h Key: value Key1: value1
 
 <b>Extract/Zip</b>: -e -z
 <code>/cmd</code> link -e password (extract password protected)
@@ -176,13 +179,20 @@ CLONE_HELP_MESSAGE = """
 Send Gdrive|Gdot|Filepress|Filebee|Appdrive|Gdflix link or rclone path along with command or by replying to the link/rc_path by command.
 
 <b>Multi links only by replying to first gdlink or rclone_path:</b>
-<code>/cmd</code> -i 10(number of links/pathies)
+<code>/cmd</code> -i 10(number of links/paths)
 
 <b>Gdrive:</b>
-<code>/cmd</code> gdrivelink
+<code>/cmd</code> gdrivelink/gdl/gdrive_id -up gdl/gdrive_id/gd
 
 <b>Rclone:</b>
-<code>/cmd</code> (rcl or rclone_path) -up (rcl or rclone_path) -rcf flagkey:flagvalue|flagkey|flagkey:flagvalue
+<code>/cmd</code> rcl/rclone_path -up rcl/rclone_path/rc -rcf flagkey:flagvalue|flagkey|flagkey:flagvalue
 
 Note: If -up not specified then rclone destination will be the RCLONE_PATH from config.env
+"""
+
+PASSWORD_ERROR_MESSAGE = """
+<b>This link requires a password!</b>
+- Insert <b>::</b> after the link and write the password after the sign.
+
+<b>Example:</b> link::my password
 """

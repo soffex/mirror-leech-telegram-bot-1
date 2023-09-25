@@ -168,14 +168,15 @@ if len(EXTENSION_FILTER) > 0:
         x = x.lstrip('.')
         GLOBAL_EXTENSION_FILTER.append(x.strip().lower())
 
-IS_PREMIUM_USER = False
-user = ''
 USER_SESSION_STRING = environ.get('USER_SESSION_STRING', '')
 if len(USER_SESSION_STRING) != 0:
     log_info("Creating client from USER_SESSION_STRING")
     user = tgClient('user', TELEGRAM_API, TELEGRAM_HASH, session_string=USER_SESSION_STRING,
                     parse_mode=enums.ParseMode.HTML, max_concurrent_transmissions=1000).start()
     IS_PREMIUM_USER = user.me.is_premium
+else:
+    IS_PREMIUM_USER = False
+    user = ''
 
 MEGA_EMAIL = environ.get('MEGA_EMAIL', '')
 MEGA_PASSWORD = environ.get('MEGA_PASSWORD', '')
@@ -184,9 +185,14 @@ if len(MEGA_EMAIL) == 0 or len(MEGA_PASSWORD) == 0:
     MEGA_EMAIL = ''
     MEGA_PASSWORD = ''
 
-UPTOBOX_TOKEN = environ.get('UPTOBOX_TOKEN', '')
-if len(UPTOBOX_TOKEN) == 0:
-    UPTOBOX_TOKEN = ''
+
+FILELION_API = environ.get('FILELION_API', '')
+if len(FILELION_API) == 0:
+    FILELION_API = ''
+
+STREAMWISH_API = environ.get('STREAMWISH_API', '')
+if len(STREAMWISH_API) == 0:
+    STREAMWISH_API = ''
 
 INDEX_URL = environ.get('INDEX_URL', '').rstrip("/")
 if len(INDEX_URL) == 0:
@@ -247,7 +253,7 @@ if RSS_CHAT.isdigit() or RSS_CHAT.startswith('-'):
     RSS_CHAT = int(RSS_CHAT)
 
 RSS_DELAY = environ.get('RSS_DELAY', '')
-RSS_DELAY = 900 if len(RSS_DELAY) == 0 else int(RSS_DELAY)
+RSS_DELAY = 600 if len(RSS_DELAY) == 0 else int(RSS_DELAY)
 
 TORRENT_TIMEOUT = environ.get('TORRENT_TIMEOUT', '')
 TORRENT_TIMEOUT = '' if len(TORRENT_TIMEOUT) == 0 else int(TORRENT_TIMEOUT)
@@ -332,6 +338,7 @@ config_dict = {'AS_DOCUMENT': AS_DOCUMENT,
                'DOWNLOAD_DIR': DOWNLOAD_DIR,
                'EQUAL_SPLITS': EQUAL_SPLITS,
                'EXTENSION_FILTER': EXTENSION_FILTER,
+               'FILELION_API': FILELION_API,
                'GDRIVE_ID': GDRIVE_ID,
                'INCOMPLETE_TASK_NOTIFIER': INCOMPLETE_TASK_NOTIFIER,
                'INDEX_URL': INDEX_URL,
@@ -360,6 +367,7 @@ config_dict = {'AS_DOCUMENT': AS_DOCUMENT,
                'STATUS_LIMIT': STATUS_LIMIT,
                'STATUS_UPDATE_INTERVAL': STATUS_UPDATE_INTERVAL,
                'STOP_DUPLICATE': STOP_DUPLICATE,
+               'STREAMWISH_API': STREAMWISH_API,
                'SUDO_USERS': SUDO_USERS,
                'TELEGRAM_API': TELEGRAM_API,
                'TELEGRAM_HASH': TELEGRAM_HASH,
@@ -367,7 +375,6 @@ config_dict = {'AS_DOCUMENT': AS_DOCUMENT,
                'USER_LEECH': USER_LEECH,
                'UPSTREAM_REPO': UPSTREAM_REPO,
                'UPSTREAM_BRANCH': UPSTREAM_BRANCH,
-               'UPTOBOX_TOKEN': UPTOBOX_TOKEN,
                'USER_SESSION_STRING': USER_SESSION_STRING,
                'USE_SERVICE_ACCOUNTS': USE_SERVICE_ACCOUNTS,
                'WEB_PINCODE': WEB_PINCODE,
@@ -465,6 +472,6 @@ log_info("Creating client from BOT_TOKEN")
 bot = tgClient('bot', TELEGRAM_API, TELEGRAM_HASH, bot_token=BOT_TOKEN, workers=1000,
                parse_mode=enums.ParseMode.HTML, max_concurrent_transmissions=1000).start()
 bot_loop = bot.loop
-bot_name = bot.me.username
+
 scheduler = AsyncIOScheduler(timezone=str(
     get_localzone()), event_loop=bot_loop)

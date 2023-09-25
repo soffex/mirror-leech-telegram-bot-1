@@ -19,9 +19,16 @@ class gdClone(GoogleDriveHelper):
         self.__start_time = time()
         self.is_cloning = True
 
-    def clone(self, link, dest_id):
+    def user_setting(self, link):
+        if self.listener.upDest.startswith('mtp:') or link.startswith('mtp:'):
+            self.token_path = f'tokens/{self.listener.user_id}.pickle'
+            self.listener.upDest = self.listener.upDest.lstrip('mtp:')
+            self.use_sa = False
+
+    def clone(self, link):
+        self.user_setting(link)
         try:
-            file_id = self.getIdFromUrl(link)
+            file_id = self.getIdFromUrl(link, self.listener.user_id)
         except (KeyError, IndexError):
             return "Google Drive ID could not be found in the provided link"
         self.service = self.authorize()
@@ -32,24 +39,24 @@ class gdClone(GoogleDriveHelper):
             mime_type = meta.get("mimeType")
             if mime_type == self.G_DRIVE_DIR_MIME_TYPE:
                 dir_id = self.create_directory(
-                    meta.get('name'), dest_id)
+                    meta.get('name'), self.listener.upDest)
                 self.__cloneFolder(meta.get('name'), meta.get('id'), dir_id)
                 durl = self.G_DRIVE_DIR_BASE_DOWNLOAD_URL.format(dir_id)
                 if self.is_cancelled:
                     LOGGER.info("Deleting cloned data from Drive...")
                     self.service.files().delete(fileId=dir_id, supportsAllDrives=True).execute()
-                    return None, None, None, None, None
+                    return None, None, None, None, None, None
                 mime_type = 'Folder'
                 size = self.proc_bytes
             else:
                 file = self.__copyFile(
-                    meta.get('id'), dest_id)
+                    meta.get('id'), self.listener.upDest)
                 msg += f'<b>Name: </b><code>{file.get("name")}</code>'
                 durl = self.G_DRIVE_BASE_DOWNLOAD_URL.format(file.get("id"))
                 if mime_type is None:
                     mime_type = 'File'
                 size = int(meta.get('size', 0))
-            return durl, size, mime_type, self.total_files, self.total_folders, self.getIdFromUrl(link)
+            return durl, size, mime_type, self.total_files, self.total_folders, self.getIdFromUrl(durl, self.listener.user_id)
         except Exception as err:
             if isinstance(err, RetryError):
                 LOGGER.info(
@@ -59,13 +66,11 @@ class gdClone(GoogleDriveHelper):
             if "User rate limit exceeded" in err:
                 msg = "User rate limit exceeded."
             elif "File not found" in err:
-                if not self.alt_auth:
-                    token_service = self.alt_authorize()
-                    if token_service is not None:
-                        LOGGER.error(
-                            'File not found. Trying with token.pickle...')
-                        self.service = token_service
-                        return self.clone(link)
+                if not self.alt_auth and self.use_sa:
+                    self.alt_auth = True
+                    self.use_sa = False
+                    LOGGER.error('File not found. Trying with token.pickle...')
+                    return self.clone(link)
                 msg = "File not found."
             else:
                 msg = f"Error.\n{err}"
@@ -77,6 +82,12 @@ class gdClone(GoogleDriveHelper):
         files = self.getFilesByFolderId(folder_id)
         if len(files) == 0:
             return dest_id
+        if self.listener.user_dict.get('excluded_extensions', False):
+            extension_filter = self.listener.user_dict['excluded_extensions']
+        elif 'excluded_extensions' not in self.listener.user_dict:
+            extension_filter = GLOBAL_EXTENSION_FILTER
+        else:
+            extension_filter = ['aria2', '!qB']
         for file in files:
             if file.get('mimeType') == self.G_DRIVE_DIR_MIME_TYPE:
                 self.total_folders += 1
@@ -84,7 +95,7 @@ class gdClone(GoogleDriveHelper):
                 current_dir_id = self.create_directory(
                     file.get('name'), dest_id)
                 self.__cloneFolder(file_path, file.get('id'), current_dir_id)
-            elif not file.get('name').lower().endswith(tuple(GLOBAL_EXTENSION_FILTER)):
+            elif not file.get('name').lower().endswith(tuple(extension_filter)):
                 self.total_files += 1
                 self.__copyFile(file.get('id'), dest_id)
                 self.proc_bytes += int(file.get('size', 0))

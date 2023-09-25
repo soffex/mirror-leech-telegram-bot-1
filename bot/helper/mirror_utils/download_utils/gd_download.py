@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-from random import SystemRandom
-from string import ascii_letters, digits
+from secrets import token_urlsafe
 
 from bot import download_dict, download_dict_lock, LOGGER, non_queued_dl, queue_dict_lock
 from bot.helper.mirror_utils.gdrive_utlis.download import gdDownload
@@ -14,13 +13,13 @@ from bot.helper.ext_utils.task_manager import is_queued, stop_duplicate_check
 
 async def add_gd_download(link, path, listener, newname):
     drive = gdCount()
-    name, mime_type, size, _, _ = await sync_to_async(drive.count, link)
+    name, mime_type, size, _, _ = await sync_to_async(drive.count, link, listener.user_id)
     if mime_type is None:
         await sendMessage(listener.message, name)
         return
 
     name = newname or name
-    gid = ''.join(SystemRandom().choices(ascii_letters + digits, k=12))
+    gid = token_urlsafe(12)
 
     msg, button = await stop_duplicate_check(name, listener)
     if msg:

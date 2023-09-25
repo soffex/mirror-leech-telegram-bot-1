@@ -82,18 +82,6 @@ class GoogleDriveHelper:
             LOGGER.error('token.pickle not found!')
         return build('drive', 'v3', credentials=credentials, cache_discovery=False)
 
-    def alt_authorize(self):
-        if not self.alt_auth:
-            self.alt_auth = True
-            if ospath.exists(self.token_path):
-                LOGGER.info(f"Authorize with {self.token_path}")
-                with open(self.token_path, 'rb') as f:
-                    credentials = pload(f)
-                return build('drive', 'v3', credentials=credentials, cache_discovery=False)
-            else:
-                LOGGER.error('token.pickle not found!')
-        return None
-
     def switchServiceAccount(self):
         if self.sa_index == self.sa_number - 1:
             self.sa_index = 0
@@ -101,13 +89,13 @@ class GoogleDriveHelper:
             self.sa_index += 1
         self.sa_count += 1
         LOGGER.info(f"Switching to {self.sa_index} index")
-        self.service = self.__authorize()
+        self.service = self.authorize()
 
-    def getIdFromUrl(self, link):
+    def getIdFromUrl(self, link, user_id):
         if link.startswith('mtp:'):
             self.use_sa = False
             link = link.lstrip('mtp:')
-            self.token_path = f'tokens/{self.listener.user_id}.pickle'
+            self.token_path = f'tokens/{user_id}.pickle'
         if is_gdrive_id(link):
             return link
         if "folders" in link or "file" in link:

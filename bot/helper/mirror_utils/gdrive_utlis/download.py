@@ -23,7 +23,7 @@ class gdDownload(GoogleDriveHelper):
         self.is_downloading = True
 
     def download(self, link):
-        file_id = self.getIdFromUrl(link)
+        file_id = self.getIdFromUrl(link, self.listener.user_id)
         self.service = self.authorize()
         self.__updater = setInterval(self.update_interval, self.progress)
         try:
@@ -43,14 +43,12 @@ class gdDownload(GoogleDriveHelper):
             if "downloadQuotaExceeded" in err:
                 err = "Download Quota Exceeded."
             elif "File not found" in err:
-                if not self.alt_auth:
-                    token_service = self.alt_authorize()
-                    if token_service is not None:
-                        LOGGER.error(
-                            'File not found. Trying with token.pickle...')
-                        self.service = token_service
-                        self.__updater.cancel()
-                        return self.download(link)
+                if not self.alt_auth and self.use_sa:
+                    self.alt_auth = True
+                    self.use_sa = False
+                    LOGGER.error('File not found. Trying with token.pickle...')
+                    self.__updater.cancel()
+                    return self.download(link)
                 err = 'File not found!'
             async_to_sync(self.listener.onDownloadError, err)
             self.is_cancelled = True
@@ -68,6 +66,12 @@ class gdDownload(GoogleDriveHelper):
         result = self.getFilesByFolderId(folder_id)
         if len(result) == 0:
             return
+        if self.listener.user_dict.get('excluded_extensions', False):
+            extension_filter = self.listener.user_dict['excluded_extensions']
+        elif 'excluded_extensions' not in self.listener.user_dict:
+            extension_filter = GLOBAL_EXTENSION_FILTER
+        else:
+            extension_filter = ['aria2', '!qB']
         result = sorted(result, key=lambda k: k['name'])
         for item in result:
             file_id = item['id']
@@ -80,7 +84,7 @@ class gdDownload(GoogleDriveHelper):
                 mime_type = item.get('mimeType')
             if mime_type == self.G_DRIVE_DIR_MIME_TYPE:
                 self.__download_folder(file_id, path, filename)
-            elif not ospath.isfile(f"{path}{filename}") and not filename.lower().endswith(tuple(GLOBAL_EXTENSION_FILTER)):
+            elif not ospath.isfile(f"{path}{filename}") and not filename.lower().endswith(tuple(extension_filter)):
                 self.__download_file(file_id, path, filename, mime_type)
             if self.is_cancelled:
                 break

@@ -14,6 +14,8 @@ from bot.helper.telegram_helper.message_utils import sendMessage, deleteMessage,
 @new_thread
 async def __onDownloadStarted(api, gid):
     download = await sync_to_async(api.get_download, gid)
+    if download.options.follow_torrent == 'false':
+        return
     if download.is_metadata:
         LOGGER.info(f'onDownloadStarted: {gid} METADATA')
         await sleep(1)
@@ -31,19 +33,20 @@ async def __onDownloadStarted(api, gid):
         return
     else:
         LOGGER.info(f'onDownloadStarted: {download.name} - Gid: {gid}')
-    if listener.upDest.startswith('mtp:') and listener.user_dict('stop_duplicate', False) or not listener.upDest.startswith('mtp:') and config_dict['STOP_DUPLICATE']:
         await sleep(1)
-        if dl := await getDownloadByGid(gid):
-            if not hasattr(dl, 'listener'):
-                LOGGER.warning(
-                    f"onDownloadStart: {gid}. STOP_DUPLICATE didn't pass since download completed earlier!")
-                return
-            listener = dl.listener()
+
+    if dl := await getDownloadByGid(gid):
+        if not hasattr(dl, 'listener'):
+            LOGGER.warning(
+                f"onDownloadStart: {gid}. STOP_DUPLICATE didn't pass since download completed earlier!")
+            return
+        listener = dl.listener()
+        if listener.upDest.startswith('mtp:') and listener.user_dict('stop_duplicate', False) or not listener.upDest.startswith('mtp:') and config_dict['STOP_DUPLICATE']:
             if listener.isLeech or listener.select or not is_gdrive_id(listener.upDest):
                 return
             download = await sync_to_async(api.get_download, gid)
             if not download.is_torrent:
-                await sleep(3)
+                await sleep(2)
                 download = download.live
             LOGGER.info('Checking File/Folder if already in Drive...')
             name = download.name
@@ -55,7 +58,7 @@ async def __onDownloadStarted(api, gid):
                 except:
                     name = None
             if name is not None:
-                telegraph_content, contents_no = await sync_to_async(gdSearch(stopDup=True).drive_list, name, listener.upDest)
+                telegraph_content, contents_no = await sync_to_async(gdSearch(stopDup=True).drive_list, name, listener.upDest, listener.user_id)
                 if telegraph_content:
                     msg = f"File/Folder is already available in Drive.\nHere are {contents_no} list results:"
                     button = await get_telegraph_list(telegraph_content)
@@ -68,6 +71,8 @@ async def __onDownloadComplete(api, gid):
     try:
         download = await sync_to_async(api.get_download, gid)
     except:
+        return
+    if download.options.follow_torrent == 'false':
         return
     if download.followed_by_ids:
         new_gid = download.followed_by_ids[0]
@@ -101,6 +106,8 @@ async def __onBtDownloadComplete(api, gid):
     seed_start_time = time()
     await sleep(1)
     download = await sync_to_async(api.get_download, gid)
+    if download.options.follow_torrent == 'false':
+        return
     LOGGER.info(f"onBtDownloadComplete: {download.name} - Gid: {gid}")
     if dl := await getDownloadByGid(gid):
         listener = dl.listener()
@@ -161,6 +168,8 @@ async def __onDownloadError(api, gid):
     error = "None"
     try:
         download = await sync_to_async(api.get_download, gid)
+        if download.options.follow_torrent == 'false':
+            return
         error = download.error_message
         LOGGER.info(f"Download Error: {error}")
     except:

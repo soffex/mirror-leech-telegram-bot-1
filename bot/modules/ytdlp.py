@@ -9,14 +9,14 @@ from functools import partial
 from time import time
 
 from bot import DOWNLOAD_DIR, bot, config_dict, user_data, LOGGER
-from bot.helper.telegram_helper.message_utils import sendMessage, editMessage
+from bot.helper.telegram_helper.message_utils import sendMessage, editMessage, deleteMessage
 from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.ext_utils.bot_utils import get_readable_file_size, is_url, new_task, sync_to_async, new_task, is_rclone_path, new_thread, get_readable_time, arg_parser, is_gdrive_id
 from bot.helper.mirror_utils.download_utils.yt_dlp_download import YoutubeDLHelper
 from bot.helper.mirror_utils.rclone_utils.list import RcloneList
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.filters import CustomFilters
-from bot.helper.listeners.tasks_listener import MirrorLeechListener
+from bot.helper.listeners.task_listener import MirrorLeechListener
 from bot.helper.ext_utils.help_messages import YT_HELP_MESSAGE
 from bot.helper.ext_utils.bulk_links import extract_bulk_links
 
@@ -157,7 +157,7 @@ class YtSelection:
         self.__reply_to = await sendMessage(self.__message, msg, self.__main_buttons)
         await wrap_future(future)
         if not self.is_cancelled:
-            await self.__reply_to.delete()
+            await deleteMessage(self.__reply_to)
         return self.qual
 
     async def back_to_main(self):
@@ -322,8 +322,6 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
 
     path = f'{DOWNLOAD_DIR}{message.id}{folder_name}'
 
-    opt = opt or config_dict['YT_DLP_OPTIONS']
-
     if len(text) > 1 and text[1].startswith('Tag: '):
         tag, id_ = text[1].split('Tag: ')[1].split()
         message.from_user = await client.get_users(id_)
@@ -331,6 +329,12 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
             await message.unpin()
         except:
             pass
+
+    user_id = message.from_user.id
+
+    user_dict = user_data.get(user_id, {})
+
+    opt = opt or user_dict.get('yt_opt') or config_dict['YT_DLP_OPTIONS']
 
     if username := message.from_user.username:
         tag = f'@{username}'
@@ -345,7 +349,6 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
         return
 
     if not isLeech:
-        user_dict = user_data.get(message.from_user.id, {})
         default_upload = user_dict.get('default_upload', '')
         if not up and (default_upload == 'rc' or not default_upload and config_dict['DEFAULT_UPLOAD'] == 'rc') or up == 'rc':
             up = user_dict.get('rclone_path') or config_dict['RCLONE_PATH']
@@ -356,7 +359,7 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
             return
         elif up != 'rcl' and is_rclone_path(up):
             if up.startswith('mrcc:'):
-                config_path = f'rclone/{message.from_user.id}.conf'
+                config_path = f'rclone/{user_id}.conf'
             else:
                 config_path = 'rclone.conf'
             if not await aiopath.exists(config_path):
@@ -364,17 +367,17 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
                 return
         elif up != 'gdl' and is_gdrive_id(up):
             if up.startswith('mtp:'):
-                token_path = f'tokens/{message.from_user.id}.pickle'
-            else:
+                token_path = f'tokens/{user_id}.pickle'
+            elif not config_dict['USE_SERVICE_ACCOUNTS']:
                 token_path = 'token.pickle'
+            else:
+                token_path = 'accounts'
             if not await aiopath.exists(token_path):
-                await sendMessage(message, f"token.pickle: {token_path} not Exists!")
+                await sendMessage(message, f"token.pickle or service accounts: {token_path} not Exists!")
                 return
         if not is_gdrive_id(up) and not is_rclone_path(up):
             await sendMessage(message, 'Wrong Upload Destination!')
             return
-    elif up.isdigit() or up.startswith('-'):
-        up = int(up)
 
     if up == 'rcl' and not isLeech:
         up = await RcloneList(client, message).get_rclone_path('rcu')
@@ -393,6 +396,12 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
         yt_opt = opt.split('|')
         for ytopt in yt_opt:
             key, value = map(str.strip, ytopt.split(':', 1))
+            if key == 'format':
+                if select:
+                    qual = ''
+                elif value.startswith('ba/b-'):
+                    qual = value
+                    continue
             if value.startswith('^'):
                 if '.' in value or value == '^inf':
                     value = float(value.split('^')[1])
@@ -418,13 +427,8 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
 
     __run_multi()
 
-    if not select:
-        user_id = message.from_user.id
-        user_dict = user_data.get(user_id, {})
-        if 'format' in options:
-            qual = options['format']
-        elif user_dict.get('yt_opt'):
-            qual = user_dict['yt_opt']
+    if not select and (not qual and 'format' in options):
+        qual = options['format']
 
     if not qual:
         qual = await YtSelection(client, message).get_quality(result)

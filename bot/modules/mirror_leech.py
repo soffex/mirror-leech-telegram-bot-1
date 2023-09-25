@@ -9,6 +9,7 @@ from aiofiles.os import path as aiopath
 from bot import bot, DOWNLOAD_DIR, LOGGER, config_dict, user_data
 from bot.helper.ext_utils.bot_utils import is_url, is_magnet, is_mega_link, is_gdrive_link, get_content_type, new_task, sync_to_async, is_rclone_path, is_telegram_link, arg_parser, is_gdrive_id
 from bot.helper.ext_utils.exceptions import DirectDownloadLinkException
+from bot.helper.mirror_utils.download_utils.direct_downloader import add_direct_download
 from bot.helper.mirror_utils.download_utils.aria2_download import add_aria2c_download
 from bot.helper.mirror_utils.download_utils.gd_download import add_gd_download
 from bot.helper.mirror_utils.download_utils.qbit_download import add_qb_torrent
@@ -21,7 +22,7 @@ from bot.helper.mirror_utils.download_utils.telegram_download import TelegramDow
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.telegram_helper.message_utils import sendMessage, get_tg_link_content
-from bot.helper.listeners.tasks_listener import MirrorLeechListener
+from bot.helper.listeners.task_listener import MirrorLeechListener
 from bot.helper.ext_utils.help_messages import MIRROR_HELP_MESSAGE
 from bot.helper.ext_utils.bulk_links import extract_bulk_links
 
@@ -32,7 +33,7 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
     input_list = text[0].split(' ')
 
     arg_base = {'link': '', '-i': 0, '-m': '', '-d': False, '-j': False, '-s': False, '-b': False,
-                '-n': '', '-e': False, '-z': False, '-up': '', '-rcf': '', '-au': '', '-ap': ''}
+                '-n': '', '-e': False, '-z': False, '-up': '', '-rcf': '', '-au': '', '-ap': '', '-h': ''}
 
     args = arg_parser(input_list[1:], arg_base)
 
@@ -52,6 +53,7 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
     compress = args['-z']
     extract = args['-e']
     join = args['-j']
+    headers = args['-h']
 
     bulk_start = 0
     bulk_end = 0
@@ -184,15 +186,21 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
         if content_type is None or re_match(r'text/html|text/plain', content_type):
             try:
                 link = await sync_to_async(direct_link_generator, link)
-                LOGGER.info(f"Generated link: {link}")
+                if isinstance(link, tuple):
+                    link, headers = link
+                elif isinstance(link, str):
+                    LOGGER.info(f"Generated link: {link}")
             except DirectDownloadLinkException as e:
-                LOGGER.info(str(e))
-                if str(e).startswith('ERROR:'):
-                    await sendMessage(message, str(e))
+                e = str(e)
+                if 'This link requires a password!' not in e:
+                    LOGGER.info(e)
+                if e.startswith('ERROR:'):
+                    await sendMessage(message, e)
                     return
 
+    user_id = message.from_user.id
     if not isLeech:
-        user_dict = user_data.get(message.from_user.id, {})
+        user_dict = user_data.get(user_id, {})
         default_upload = user_dict.get('default_upload', '')
         if not up and (default_upload == 'rc' or not default_upload and config_dict['DEFAULT_UPLOAD'] == 'rc') or up == 'rc':
             up = user_dict.get('rclone_path') or config_dict['RCLONE_PATH']
@@ -203,7 +211,7 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
             return
         elif up != 'rcl' and is_rclone_path(up):
             if up.startswith('mrcc:'):
-                config_path = f'rclone/{message.from_user.id}.conf'
+                config_path = f'rclone/{user_id}.conf'
             else:
                 config_path = 'rclone.conf'
             if not await aiopath.exists(config_path):
@@ -211,17 +219,17 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
                 return
         elif up != 'gdl' and is_gdrive_id(up):
             if up.startswith('mtp:'):
-                token_path = f'tokens/{message.from_user.id}.pickle'
-            else:
+                token_path = f'tokens/{user_id}.pickle'
+            elif not config_dict['USE_SERVICE_ACCOUNTS']:
                 token_path = 'token.pickle'
+            else:
+                token_path = 'accounts'
             if not await aiopath.exists(token_path):
-                await sendMessage(message, f"token.pickle: {token_path} not Exists!")
+                await sendMessage(message, f"token.pickle or service accounts: {token_path} not Exists!")
                 return
         if not is_gdrive_id(up) and not is_rclone_path(up):
             await sendMessage(message, 'Wrong Upload Destination!')
             return
-    elif up.isdigit() or up.startswith('-'):
-        up = int(up)
 
     if link == 'rcl':
         link = await RcloneList(client, message).get_rclone_path('rcd')
@@ -251,10 +259,12 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
 
     if file_ is not None:
         await TelegramDownloadHelper(listener).add_download(reply_to, f'{path}/', name, session)
+    elif isinstance(link, dict):
+        await add_direct_download(link, path, listener, name)
     elif is_rclone_path(link):
         if link.startswith('mrcc:'):
             link = link.split('mrcc:', 1)[1]
-            config_path = f'rclone/{message.from_user.id}.conf'
+            config_path = f'rclone/{user_id}.conf'
         else:
             config_path = 'rclone.conf'
         if not await aiopath.exists(config_path):
@@ -272,10 +282,8 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
         pssw = args['-ap']
         if ussr or pssw:
             auth = f"{ussr}:{pssw}"
-            auth = "Basic " + b64encode(auth.encode()).decode('ascii')
-        else:
-            auth = ''
-        await add_aria2c_download(link, path, listener, name, auth, ratio, seed_time)
+            headers += f" authorization: Basic {b64encode(auth.encode()).decode('ascii')}"
+        await add_aria2c_download(link, path, listener, name, headers, ratio, seed_time)
 
 
 async def mirror(client, message):

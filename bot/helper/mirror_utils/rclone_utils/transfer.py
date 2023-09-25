@@ -32,6 +32,8 @@ class RcloneTransferHelper:
         self.__sa_index = 0
         self.__sa_number = 0
         self.name = name
+        self.extension_filter = ['aria2', '!qB']
+        self.user_settings()
 
     @property
     def transferred_size(self):
@@ -52,6 +54,14 @@ class RcloneTransferHelper:
     @property
     def size(self):
         return self.__size
+
+    def user_settings(self):
+        if self.__listener.user_dict.get('excluded_extensions', False):
+            self.extension_filter = self.__listener.user_dict['excluded_extensions']
+        elif 'excluded_extensions' not in self.__listener.user_dict:
+            self.extension_filter = GLOBAL_EXTENSION_FILTER
+        else:
+            self.extension_filter = ['aria2', '!qB']
 
     async def __progress(self):
         while not (self.__proc is None or self.__is_cancelled):
@@ -145,9 +155,8 @@ class RcloneTransferHelper:
                 remote = f'sa{self.__sa_index:03}'
                 LOGGER.info(f'Download with service account {remote}')
 
-        rcflags = self.__listener.rcFlags or config_dict['RCLONE_FLAGS']
         cmd = self.__getUpdatedCommand(
-            config_path, f'{remote}:{rc_path}', path, rcflags, 'copy')
+            config_path, f'{remote}:{rc_path}', path, 'copy')
 
         if remote_type == 'drive' and not config_dict['RCLONE_FLAGS'] and not self.__listener.rcFlags:
             cmd.append('--drive-acknowledge-abuse')
@@ -229,7 +238,7 @@ class RcloneTransferHelper:
             folders, files = await count_files_and_folders(path)
             rc_path += f"/{self.name}" if rc_path else self.name
         else:
-            if path.lower().endswith(tuple(GLOBAL_EXTENSION_FILTER)):
+            if path.lower().endswith(tuple(self.extension_filter)):
                 await self.__listener.onUploadError('This file extension is excluded by extension filter!')
                 return
             mime_type = await sync_to_async(get_mime_type, path)
@@ -255,10 +264,9 @@ class RcloneTransferHelper:
                 fremote = f'sa{self.__sa_index:03}'
                 LOGGER.info(f'Upload with service account {fremote}')
 
-        rcflags = self.__listener.rcFlags or config_dict['RCLONE_FLAGS']
         method = 'move' if not self.__listener.seed or self.__listener.newDir else 'copy'
         cmd = self.__getUpdatedCommand(
-            fconfig_path, path, f'{fremote}:{rc_path}', rcflags, method)
+            fconfig_path, path, f'{fremote}:{rc_path}', method)
         if remote_type == 'drive' and not config_dict['RCLONE_FLAGS'] and not self.__listener.rcFlags:
             cmd.extend(('--drive-chunk-size', '64M',
                        '--drive-upload-cutoff', '32M'))
@@ -293,7 +301,8 @@ class RcloneTransferHelper:
         LOGGER.info(f'Upload Done. Path: {destination}')
         await self.__listener.onUploadComplete(link, size, files, folders, mime_type, self.name, destination, private=private)
 
-    async def clone(self, config_path, src_remote, src_path, destination, rcflags, mime_type):
+    async def clone(self, config_path, src_remote, src_path, mime_type):
+        destination = self.__listener.upDest
         dst_remote, dst_path = destination.split(':', 1)
 
         try:
@@ -306,8 +315,8 @@ class RcloneTransferHelper:
         src_remote_type, dst_remote_type = src_remote_opts['type'], dst_remote_opt['type']
 
         cmd = self.__getUpdatedCommand(
-            config_path, f'{src_remote}:{src_path}', destination, rcflags, 'copy')
-        if not rcflags:
+            config_path, f'{src_remote}:{src_path}', destination, 'copy')
+        if not self.__listener.rcFlags and not config_dict['RCLONE_FLAGS']:
             if src_remote_type == 'drive' and dst_remote_type != 'drive':
                 cmd.append('--drive-acknowledge-abuse')
             elif dst_remote_type == 'drive' and src_remote_type != 'drive':
@@ -351,13 +360,12 @@ class RcloneTransferHelper:
                     await self.__listener.onUploadError(err[:4000])
                     return None, None
 
-    @staticmethod
-    def __getUpdatedCommand(config_path, source, destination, rcflags, method):
-        ext = '*.{' + ','.join(GLOBAL_EXTENSION_FILTER) + '}'
+    def __getUpdatedCommand(self, config_path, source, destination, method):
+        ext = '*.{' + ','.join(self.extension_filter) + '}'
         cmd = ['rclone', method, '--fast-list', '--config', config_path, '-P', source, destination,
                '--exclude', ext, '--ignore-case', '--low-level-retries', '1', '-M', '--log-file',
                'rlog.txt', '--log-level', 'DEBUG']
-        if rcflags:
+        if rcflags := self.__listener.rcFlags or config_dict['RCLONE_FLAGS']:
             rcflags = rcflags.split('|')
             for flag in rcflags:
                 if ":" in flag:
