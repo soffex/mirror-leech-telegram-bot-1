@@ -16,6 +16,7 @@ from bot import (
     task_dict,
     GLOBAL_EXTENSION_FILTER,
     cpu_eater_lock,
+    subprocess_lock,
 )
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.ext_utils.bot_utils import new_task, sync_to_async
@@ -290,6 +291,8 @@ class TaskConfig:
         if len(text) > 1 and text[1].startswith("Tag: "):
             self.tag, id_ = text[1].split("Tag: ")[1].split()
             self.user = self.message.from_user = await self.client.get_users(id_)
+            self.user_id = self.user.id
+            self.user_dict = user_data.get(self.user_id, {})
             try:
                 await self.message.unpin()
             except:
@@ -428,13 +431,10 @@ class TaskConfig:
                             ]
                             if not pswd:
                                 del cmd[2]
-                            if (
-                                self.suproc == "cancelled"
-                                or self.suproc is not None
-                                and self.suproc.returncode == -9
-                            ):
-                                return False
-                            self.suproc = await create_subprocess_exec(*cmd)
+                            async with subprocess_lock:
+                                if self.suproc == "cancelled":
+                                    return False
+                                self.suproc = await create_subprocess_exec(*cmd)
                             _, stderr = await self.suproc.communicate()
                             code = self.suproc.returncode
                             if code == -9:
@@ -473,9 +473,10 @@ class TaskConfig:
                 ]
                 if not pswd:
                     del cmd[2]
-                if self.suproc == "cancelled":
-                    return False
-                self.suproc = await create_subprocess_exec(*cmd)
+                async with subprocess_lock:
+                    if self.suproc == "cancelled":
+                        return False
+                    self.suproc = await create_subprocess_exec(*cmd)
                 _, stderr = await self.suproc.communicate()
                 code = self.suproc.returncode
                 if code == -9:
@@ -538,9 +539,10 @@ class TaskConfig:
             if not pswd:
                 del cmd[3]
             LOGGER.info(f"Zip: orig_path: {dl_path}, zip_path: {up_path}")
-        if self.suproc == "cancelled":
-            return False
-        self.suproc = await create_subprocess_exec(*cmd)
+        async with subprocess_lock:
+            if self.suproc == "cancelled":
+                return False
+            self.suproc = await create_subprocess_exec(*cmd)
         _, stderr = await self.suproc.communicate()
         code = self.suproc.returncode
         if code == -9:
@@ -567,7 +569,7 @@ class TaskConfig:
                             task_dict[self.mid] = SplitStatus(self, size, gid)
                         LOGGER.info(f"Splitting: {self.name}")
                     res = await split_file(
-                        f_path, f_size, file_, dirpath, self.splitSize, self
+                        f_path, f_size, dirpath, self.splitSize, self
                     )
                     if not res:
                         return False
