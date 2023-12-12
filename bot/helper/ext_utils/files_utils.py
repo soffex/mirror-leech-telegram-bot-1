@@ -1,15 +1,14 @@
 from os import walk, path as ospath
 from aiofiles.os import remove as aioremove, path as aiopath, listdir, rmdir, makedirs
 from aioshutil import rmtree as aiormtree
-from shutil import rmtree
 from magic import Magic
 from re import split as re_split, I, search as re_search
 from subprocess import run as srun
 from sys import exit as sexit
 
 from .exceptions import NotSupportedExtractionArchive
-from bot import aria2, LOGGER, DOWNLOAD_DIR, get_client, GLOBAL_EXTENSION_FILTER
-from bot.helper.ext_utils.bot_utils import sync_to_async, cmd_exec
+from bot import aria2, LOGGER, DOWNLOAD_DIR, get_client
+from bot.helper.ext_utils.bot_utils import sync_to_async, async_to_sync, cmd_exec
 
 ARCH_EXT = [
     ".tar.bz2",
@@ -74,7 +73,7 @@ async def clean_target(path):
         try:
             if await aiopath.isdir(path):
                 await aiormtree(path)
-            elif await aiopath.isfile(path):
+            else:
                 await aioremove(path)
         except Exception as e:
             LOGGER.error(str(e))
@@ -89,28 +88,20 @@ async def clean_download(path):
             LOGGER.error(str(e))
 
 
-async def start_cleanup():
-    get_client().torrents_delete(torrent_hashes="all")
+async def clean_all():
+    await sync_to_async(aria2.remove_all, True)
+    await sync_to_async(get_client().torrents_delete, torrent_hashes="all")
     try:
         await aiormtree(DOWNLOAD_DIR)
-    except Exception as e:
-        LOGGER.error(str(e))
+    except:
+        pass
     await makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-
-def clean_all():
-    aria2.remove_all(True)
-    get_client().torrents_delete(torrent_hashes="all")
-    try:
-        rmtree(DOWNLOAD_DIR)
-    except Exception as e:
-        LOGGER.error(str(e))
 
 
 def exit_clean_up(signal, frame):
     try:
         LOGGER.info("Please wait, while we clean up and stop the running downloads")
-        clean_all()
+        async_to_sync(clean_all)
         srun(["pkill", "-9", "-f", "gunicorn|aria2c|qbittorrent-nox|ffmpeg"])
         sexit(0)
     except KeyboardInterrupt:
@@ -146,13 +137,13 @@ async def get_path_size(path):
     return total_size
 
 
-async def count_files_and_folders(path):
+async def count_files_and_folders(path, extension_filter):
     total_files = 0
     total_folders = 0
     for _, dirs, files in await sync_to_async(walk, path):
         total_files += len(files)
         for f in files:
-            if f.endswith(tuple(GLOBAL_EXTENSION_FILTER)):
+            if f.endswith(tuple(extension_filter)):
                 total_files -= 1
         total_folders += len(dirs)
     return total_folders, total_files

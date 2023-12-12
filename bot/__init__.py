@@ -4,15 +4,13 @@ from pyrogram import Client as tgClient, enums
 from pymongo import MongoClient
 from asyncio import Lock
 from dotenv import load_dotenv, dotenv_values
-from threading import Thread
-from time import sleep, time
+from time import time
 from subprocess import Popen, run as srun
 from os import remove as osremove, path as ospath, environ, getcwd
 from aria2p import API as ariaAPI, Client as ariaClient
 from qbittorrentapi import Client as qbClient
-
-# from faulthandler import enable as faulthandler_enable
 from socket import setdefaulttimeout
+from uvloop import install
 from logging import (
     getLogger,
     FileHandler,
@@ -24,9 +22,10 @@ from logging import (
     warning as log_warning,
     ERROR,
 )
-from uvloop import install
 
+# from faulthandler import enable as faulthandler_enable
 # faulthandler_enable()
+
 install()
 setdefaulttimeout(600)
 
@@ -34,6 +33,7 @@ getLogger("qbittorrentapi").setLevel(INFO)
 getLogger("requests").setLevel(INFO)
 getLogger("urllib3").setLevel(INFO)
 getLogger("pyrogram").setLevel(ERROR)
+getLogger("httpx").setLevel(ERROR)
 
 botStartTime = time()
 
@@ -44,6 +44,8 @@ basicConfig(
 )
 
 LOGGER = getLogger(__name__)
+
+aria2 = ariaAPI(ariaClient(host="http://localhost", port=6800, secret=""))
 
 load_dotenv("config.env", override=True)
 
@@ -344,7 +346,7 @@ UPSTREAM_BRANCH = environ.get("UPSTREAM_BRANCH", "")
 if len(UPSTREAM_BRANCH) == 0:
     UPSTREAM_BRANCH = "master"
 
-RCLONE_SERVE_URL = environ.get("RCLONE_SERVE_URL", "")
+RCLONE_SERVE_URL = environ.get("RCLONE_SERVE_URL", "").rstrip("/")
 if len(RCLONE_SERVE_URL) == 0:
     RCLONE_SERVE_URL = ""
 
@@ -442,10 +444,10 @@ srun(["qbittorrent-nox", "-d", f"--profile={getcwd()}"])
 if not ospath.exists(".netrc"):
     with open(".netrc", "w"):
         pass
-srun(["chmod", "600", ".netrc"])
-srun(["cp", ".netrc", "/root/.netrc"])
-srun(["chmod", "+x", "aria.sh"])
-srun("./aria.sh", shell=True)
+srun(
+    "chmod 600 .netrc && cp .netrc /root/.netrc && chmod +x aria.sh && ./aria.sh",
+    shell=True,
+)
 if ospath.exists("accounts.zip"):
     if ospath.exists("accounts"):
         srun(["rm", "-rf", "accounts"])
@@ -454,36 +456,11 @@ if ospath.exists("accounts.zip"):
     osremove("accounts.zip")
 if not ospath.exists("accounts"):
     config_dict["USE_SERVICE_ACCOUNTS"] = False
-sleep(0.5)
-
-aria2 = ariaAPI(ariaClient(host="http://localhost", port=6800, secret=""))
 
 
 def get_client():
-    return qbClient(
-        host="localhost",
-        port=8090,
-        VERIFY_WEBUI_CERTIFICATE=False,
-        REQUESTS_ARGS={"timeout": (30, 60)},
-    )
+    return qbClient(host="localhost", port=8090, REQUESTS_ARGS={"timeout": (30, 60)})
 
-
-def aria2c_init():
-    try:
-        log_info("Initializing Aria2c")
-        link = "https://linuxmint.com/torrents/lmde-5-cinnamon-64bit.iso.torrent"
-        dire = DOWNLOAD_DIR.rstrip("/")
-        aria2.add_uris([link], {"dir": dire})
-        sleep(3)
-        downloads = aria2.get_downloads()
-        sleep(10)
-        aria2.remove(downloads, force=True, files=True, clean=True)
-    except Exception as e:
-        log_error(f"Aria2c initializing error: {e}")
-
-
-Thread(target=aria2c_init).start()
-sleep(1.5)
 
 aria2c_global = [
     "bt-max-open-files",
@@ -500,12 +477,6 @@ aria2c_global = [
     "save-cookies",
     "server-stat-of",
 ]
-
-if not aria2_options:
-    aria2_options = aria2.client.get_global_option()
-else:
-    a2c_glo = {op: aria2_options[op] for op in aria2c_global if op in aria2_options}
-    aria2.set_global_options(a2c_glo)
 
 qb_client = get_client()
 if not qbit_options:
@@ -534,3 +505,9 @@ bot = tgClient(
 bot_loop = bot.loop
 
 scheduler = AsyncIOScheduler(timezone=str(get_localzone()), event_loop=bot_loop)
+
+if not aria2_options:
+    aria2_options = aria2.client.get_global_option()
+else:
+    a2c_glo = {op: aria2_options[op] for op in aria2c_global if op in aria2_options}
+    aria2.set_global_options(a2c_glo)

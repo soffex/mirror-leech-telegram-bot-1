@@ -22,7 +22,7 @@ from re import match as re_match, sub as re_sub
 from natsort import natsorted
 from aioshutil import copy
 
-from bot import config_dict, GLOBAL_EXTENSION_FILTER, user
+from bot import config_dict, user
 from bot.helper.ext_utils.files_utils import clean_unwanted, is_archive, get_base_name
 from bot.helper.ext_utils.bot_utils import sync_to_async
 from bot.helper.ext_utils.media_utils import (
@@ -136,7 +136,7 @@ class TgUploader:
             if is_archive(file_):
                 name = get_base_name(file_)
                 ext = file_.split(name, 1)[1]
-            elif match := re_match(r".+(?=\..+\.0*\d+$)|.+(?=\.part\d+\..+)", file_):
+            elif match := re_match(r".+(?=\..+\.0*\d+$)|.+(?=\.part\d+\..+$)", file_):
                 name = match.group(0)
                 ext = file_.split(name, 1)[1]
             elif len(fsplit := ospath.splitext(file_)) > 1:
@@ -192,11 +192,13 @@ class TgUploader:
                 else:
                     outputs.remove(m)
             if outputs:
-                self._sent_msg = (await self._sent_msg.reply_media_group(
-                    media=inputs,
-                    quote=True,
-                    disable_notification=True,
-                ))[-1]
+                self._sent_msg = (
+                    await self._sent_msg.reply_media_group(
+                        media=inputs,
+                        quote=True,
+                        disable_notification=True,
+                    )
+                )[-1]
                 for m in outputs:
                     await aioremove(m)
 
@@ -221,18 +223,12 @@ class TgUploader:
         res = await self._msg_to_reply()
         if not res:
             return
-        if self._listener.user_dict.get("excluded_extensions", False):
-            extension_filter = self._listener.user_dict["excluded_extensions"]
-        elif "excluded_extensions" not in self._listener.user_dict:
-            extension_filter = GLOBAL_EXTENSION_FILTER
-        else:
-            extension_filter = ["aria2", "!qB"]
         for dirpath, _, files in sorted(await sync_to_async(walk, self._path)):
             if dirpath.endswith("/yt-dlp-thumb"):
                 continue
             for file_ in natsorted(files):
                 self._up_path = ospath.join(dirpath, file_)
-                if file_.lower().endswith(tuple(extension_filter)):
+                if file_.lower().endswith(tuple(self._listener.extension_filter)):
                     if not self._listener.seed or self._listener.newDir:
                         await aioremove(self._up_path)
                     continue
@@ -254,11 +250,10 @@ class TgUploader:
                         group_lists = [
                             x for v in self._media_dict.values() for x in v.keys()
                         ]
-                        if (
-                            match := re_match(
-                                r".+(?=\.0*\d+$)|.+(?=\.part\d+\..+)", self._up_path
-                            )
-                        ) and match.group(0) not in group_lists:
+                        match = re_match(
+                            r".+(?=\.0*\d+$)|.+(?=\.part\d+\..+$)", self._up_path
+                        )
+                        if not match or match and match.group(0) not in group_lists:
                             for key, value in list(self._media_dict.items()):
                                 for subkey, msgs in list(value.items()):
                                     if len(msgs) > 1:
@@ -299,7 +294,12 @@ class TgUploader:
         for key, value in list(self._media_dict.items()):
             for subkey, msgs in list(value.items()):
                 if len(msgs) > 1:
-                    await self._send_media_group(subkey, key, msgs)
+                    try:
+                        await self._send_media_group(subkey, key, msgs)
+                    except Exception as e:
+                        LOGGER.info(
+                            f"While sending media group at the end of task. Error: {e}"
+                        )
         if self._is_cancelled:
             return
         if self._listener.seed and not self._listener.newDir:
@@ -442,7 +442,7 @@ class TgUploader:
             ):
                 key = "documents" if self._sent_msg.document else "videos"
                 if match := re_match(
-                    r".+(?=\.0*\d+$)|.+(?=\.part\d+\..+)", self._up_path
+                    r".+(?=\.0*\d+$)|.+(?=\.part\d+\..+$)", self._up_path
                 ):
                     pname = match.group(0)
                     if pname in self._media_dict[key].keys():

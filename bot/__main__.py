@@ -19,7 +19,6 @@ from asyncio import create_subprocess_exec, gather
 
 from bot import (
     bot,
-    user,
     botStartTime,
     LOGGER,
     Interval,
@@ -28,7 +27,7 @@ from bot import (
     INCOMPLETE_TASK_NOTIFIER,
     scheduler,
 )
-from .helper.ext_utils.files_utils import start_cleanup, clean_all, exit_clean_up
+from .helper.ext_utils.files_utils import clean_all, exit_clean_up
 from .helper.ext_utils.bot_utils import cmd_exec, sync_to_async, initiate_help_messages
 from .helper.ext_utils.status_utils import get_readable_file_size, get_readable_time
 from .helper.ext_utils.db_handler import DbManger
@@ -117,12 +116,10 @@ async def restart(_, message):
     if Interval:
         for intvl in list(Interval.values()):
             intvl.cancel()
-    await sync_to_async(clean_all)
+    await clean_all()
     proc1 = await create_subprocess_exec(
         "pkill", "-9", "-f", "gunicorn|aria2c|qbittorrent-nox|ffmpeg|rclone"
     )
-    if user:
-        await user.stop()
     proc2 = await create_subprocess_exec("python3", "update.py")
     await gather(proc1.wait(), proc2.wait())
     async with aiopen(".restartmsg", "w") as f:
@@ -231,7 +228,7 @@ async def restart_notification():
 
 async def main():
     await gather(
-        start_cleanup(),
+        clean_all(),
         torrent_search.initiate_search_tools(),
         restart_notification(),
         initiate_help_messages(),

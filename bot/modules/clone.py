@@ -46,21 +46,20 @@ class Clone(TaskListener):
         message,
         _=None,
         __=None,
-        sameDir=None,
+        ___=None,
         bulk=None,
         multiTag=None,
         options="",
     ):
-        if sameDir is None:
-            sameDir = {}
         if bulk is None:
             bulk = []
-        super().__init__(message)
+        self.message = message
         self.client = client
         self.multiTag = multiTag
         self.options = options
-        self.sameDir = sameDir
+        self.sameDir = {}
         self.bulk = bulk
+        super().__init__()
         self.isClone = True
 
     @new_task
@@ -78,7 +77,7 @@ class Clone(TaskListener):
             self.multi = 0
 
         self.upDest = args["-up"]
-        self.rcf = args["-rcf"]
+        self.rcFlags = args["-rcf"]
         self.link = args["link"]
 
         isBulk = args["-b"]
@@ -166,6 +165,7 @@ class Clone(TaskListener):
         elif is_rclone_path(self.link):
             if self.link.startswith("mrcc:"):
                 self.link = self.link.lstrip("mrcc:")
+                self.upDest = self.upDest.lstrip("mrcc:")
                 config_path = f"rclone/{self.user_id}.conf"
             else:
                 config_path = "rclone.conf"
