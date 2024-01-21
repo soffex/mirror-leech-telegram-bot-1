@@ -1,13 +1,13 @@
 from time import time
 
 from bot import LOGGER, subprocess_lock
+from bot.helper.ext_utils.bot_utils import async_to_sync
+from bot.helper.ext_utils.files_utils import get_path_size
 from bot.helper.ext_utils.status_utils import (
     get_readable_file_size,
     MirrorStatus,
     get_readable_time,
 )
-from bot.helper.ext_utils.bot_utils import async_to_sync
-from bot.helper.ext_utils.files_utils import get_path_size
 
 
 class ZipStatus:
@@ -65,12 +65,11 @@ class ZipStatus:
 
     async def cancel_task(self):
         LOGGER.info(f"Cancelling Archive: {self.listener.name}")
+        self.listener.cancelled = True
         async with subprocess_lock:
             if (
                 self.listener.suproc is not None
                 and self.listener.suproc.returncode is None
             ):
                 self.listener.suproc.kill()
-            else:
-                self.listener.suproc = "cancelled"
         await self.listener.onUploadError("archiving stopped by user!")

@@ -1,7 +1,7 @@
-from logging import getLogger
-from os import path as ospath, listdir, remove as osremove
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
+from logging import getLogger
+from os import path as ospath, listdir, remove
 from tenacity import (
     retry,
     wait_exponential,
@@ -11,8 +11,8 @@ from tenacity import (
 )
 
 from bot import config_dict
-from bot.helper.ext_utils.files_utils import get_mime_type
 from bot.helper.ext_utils.bot_utils import async_to_sync, setInterval
+from bot.helper.ext_utils.files_utils import get_mime_type
 from bot.helper.mirror_utils.gdrive_utils.helper import GoogleDriveHelper
 
 LOGGER = getLogger(__name__)
@@ -29,14 +29,14 @@ class gdUpload(GoogleDriveHelper):
 
     def user_setting(self):
         if self.listener.upDest.startswith("mtp:"):
-            self.token_path = f"tokens/{self.listener.user_id}.pickle"
-            self.listener.upDest = self.listener.upDest.lstrip("mtp:")
+            self.token_path = f"tokens/{self.listener.userId}.pickle"
+            self.listener.upDest = self.listener.upDest.replace("mtp:", "", 1)
             self.use_sa = False
         elif self.listener.upDest.startswith("tp:"):
-            self.listener.upDest = self.listener.upDest.lstrip("tp:")
+            self.listener.upDest = self.listener.upDest.replace("tp:", "", 1)
             self.use_sa = False
         elif self.listener.upDest.startswith("sa:"):
-            self.listener.upDest = self.listener.upDest.lstrip("sa:")
+            self.listener.upDest = self.listener.upDest.replace("sa:", "", 1)
             self.use_sa = True
 
     def upload(self, size):
@@ -46,7 +46,7 @@ class gdUpload(GoogleDriveHelper):
         self._updater = setInterval(self.update_interval, self.progress)
         try:
             if ospath.isfile(self._path):
-                if self._path.lower().endswith(tuple(self.listener.extension_filter)):
+                if self._path.lower().endswith(tuple(self.listener.extensionFilter)):
                     raise Exception(
                         "This file extension is excluded by extension filter!"
                     )
@@ -115,7 +115,7 @@ class gdUpload(GoogleDriveHelper):
                 current_dir_id = self.create_directory(item, dest_id)
                 new_id = self._upload_dir(current_file_name, current_dir_id)
                 self.total_folders += 1
-            elif not item.lower().endswith(tuple(self.listener.extension_filter)):
+            elif not item.lower().endswith(tuple(self.listener.extensionFilter)):
                 mime_type = get_mime_type(current_file_name)
                 file_name = current_file_name.split("/")[-1]
                 self._upload_file(current_file_name, file_name, mime_type, dest_id)
@@ -123,7 +123,7 @@ class gdUpload(GoogleDriveHelper):
                 new_id = dest_id
             else:
                 if not self.listener.seed or self.listener.newDir:
-                    osremove(current_file_name)
+                    remove(current_file_name)
                 new_id = "filter"
             if self.is_cancelled:
                 break
@@ -176,7 +176,7 @@ class gdUpload(GoogleDriveHelper):
             try:
                 self.status, response = drive_file.next_chunk()
             except HttpError as err:
-                if err.resp.status in [500, 502, 503, 504] and retries < 10:
+                if err.resp.status in [500, 502, 503, 504, 429] and retries < 10:
                     retries += 1
                     continue
                 if err.resp.get("content-type", "").startswith("application/json"):
@@ -209,7 +209,7 @@ class gdUpload(GoogleDriveHelper):
             return
         if not self.listener.seed or self.listener.newDir:
             try:
-                osremove(file_path)
+                remove(file_path)
             except:
                 pass
         self.file_processed_bytes = 0

@@ -1,11 +1,11 @@
-from requests import utils as rutils
 from aiofiles.os import path as aiopath, listdir, makedirs
-from html import escape
 from aioshutil import move
-from asyncio import sleep, Event, gather
+from asyncio import sleep, gather
+from html import escape
+from requests import utils as rutils
 
 from bot import (
-    Interval,
+    Intervals,
     aria2,
     DOWNLOAD_DIR,
     task_dict,
@@ -19,31 +19,31 @@ from bot import (
     queued_dl,
     queue_dict_lock,
 )
+from bot.helper.common import TaskConfig
+from bot.helper.ext_utils.bot_utils import sync_to_async
+from bot.helper.ext_utils.db_handler import DbManager
 from bot.helper.ext_utils.files_utils import (
     get_path_size,
     clean_download,
     clean_target,
     join_files,
 )
+from bot.helper.ext_utils.links_utils import is_gdrive_id
+from bot.helper.ext_utils.status_utils import get_readable_file_size
+from bot.helper.ext_utils.task_manager import start_from_queued, check_running_tasks
+from bot.helper.mirror_utils.gdrive_utils.upload import gdUpload
+from bot.helper.mirror_utils.rclone_utils.transfer import RcloneTransferHelper
+from bot.helper.mirror_utils.status_utils.gdrive_status import GdriveStatus
+from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
+from bot.helper.mirror_utils.status_utils.rclone_status import RcloneStatus
+from bot.helper.mirror_utils.status_utils.telegram_status import TelegramStatus
+from bot.helper.mirror_utils.telegram_uploader import TgUploader
+from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.telegram_helper.message_utils import (
     sendMessage,
     delete_status,
     update_status_message,
 )
-from bot.helper.ext_utils.status_utils import get_readable_file_size
-from bot.helper.ext_utils.bot_utils import sync_to_async
-from bot.helper.ext_utils.links_utils import is_gdrive_id
-from bot.helper.ext_utils.task_manager import start_from_queued
-from bot.helper.mirror_utils.status_utils.gdrive_status import GdriveStatus
-from bot.helper.mirror_utils.status_utils.telegram_status import TelegramStatus
-from bot.helper.mirror_utils.status_utils.rclone_status import RcloneStatus
-from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
-from bot.helper.mirror_utils.gdrive_utils.upload import gdUpload
-from bot.helper.mirror_utils.telegram_uploader import TgUploader
-from bot.helper.mirror_utils.rclone_utils.transfer import RcloneTransferHelper
-from bot.helper.telegram_helper.button_build import ButtonMaker
-from bot.helper.ext_utils.db_handler import DbManger
-from bot.helper.common import TaskConfig
 
 
 class TaskListener(TaskConfig):
@@ -52,10 +52,10 @@ class TaskListener(TaskConfig):
 
     async def clean(self):
         try:
-            if Interval:
-                for intvl in list(Interval.values()):
+            if st := Intervals["status"]:
+                for intvl in list(st.values()):
                     intvl.cancel()
-            Interval.clear()
+            Intervals["status"].clear()
             await gather(sync_to_async(aria2.purge), delete_status())
         except:
             pass
@@ -71,7 +71,7 @@ class TaskListener(TaskConfig):
             and config_dict["INCOMPLETE_TASK_NOTIFIER"]
             and DATABASE_URL
         ):
-            await DbManger().add_incomplete_task(
+            await DbManager().add_incomplete_task(
                 self.message.chat.id, self.message.link, self.tag
             )
 
@@ -129,31 +129,39 @@ class TaskListener(TaskConfig):
 
         up_path = f"{self.dir}/{self.name}"
         size = await get_path_size(up_path)
-        async with queue_dict_lock:
-            if self.mid in non_queued_dl:
-                non_queued_dl.remove(self.mid)
-        await start_from_queued()
+        if not config_dict["QUEUE_ALL"]:
+            async with queue_dict_lock:
+                if self.mid in non_queued_dl:
+                    non_queued_dl.remove(self.mid)
+            await start_from_queued()
 
         if self.join and await aiopath.isdir(up_path):
             await join_files(up_path)
 
         if self.extract:
             up_path = await self.proceedExtract(up_path, size, gid)
-            if not up_path:
+            if self.cancelled:
                 return
             up_dir, self.name = up_path.rsplit("/", 1)
             size = await get_path_size(up_dir)
 
+        if self.convertAudio or self.convertVideo:
+            up_dir, self.name = up_path.rsplit("/", 1)
+            await self.convertMedia(up_dir, size, gid)
+            if self.cancelled:
+                return
+            size = await get_path_size(up_dir)
+
         if self.sampleVideo:
             up_path = await self.generateSampleVideo(up_path, size, gid)
-            if not up_path:
+            if self.cancelled:
                 return
             up_dir, self.name = up_path.rsplit("/", 1)
             size = await get_path_size(up_dir)
 
         if self.compress:
             up_path = await self.proceedCompress(up_path, size, gid)
-            if not up_path:
+            if self.cancelled:
                 return
 
         up_dir, self.name = up_path.rsplit("/", 1)
@@ -163,31 +171,22 @@ class TaskListener(TaskConfig):
             m_size = []
             o_files = []
             if not self.compress:
-                result = await self.proceedSplit(up_dir, m_size, o_files, size, gid)
-                if not result:
+                await self.proceedSplit(up_dir, m_size, o_files, size, gid)
+                if self.cancelled:
                     return
 
-        up_limit = config_dict["QUEUE_UPLOAD"]
-        all_limit = config_dict["QUEUE_ALL"]
-        add_to_queue = False
-        async with queue_dict_lock:
-            dl = len(non_queued_dl)
-            up = len(non_queued_up)
-            if (
-                all_limit and dl + up >= all_limit and (not up_limit or up >= up_limit)
-            ) or (up_limit and up >= up_limit):
-                add_to_queue = True
+        if not (self.forceRun or self.forceUpload):
+            add_to_queue, event = await check_running_tasks(self.mid, "up")
+            await start_from_queued()
+            if add_to_queue:
                 LOGGER.info(f"Added to Queue/Upload: {self.name}")
-                event = Event()
-                queued_up[self.mid] = event
-        if add_to_queue:
-            async with task_dict_lock:
-                task_dict[self.mid] = QueueStatus(self, size, gid, "Up")
-            await event.wait()
-            async with task_dict_lock:
-                if self.mid not in task_dict:
-                    return
-            LOGGER.info(f"Start from Queued/Upload: {self.name}")
+                async with task_dict_lock:
+                    task_dict[self.mid] = QueueStatus(self, size, gid, "Up")
+                await event.wait()
+                async with task_dict_lock:
+                    if self.mid not in task_dict:
+                        return
+                LOGGER.info(f"Start from Queued/Upload: {self.name}")
         async with queue_dict_lock:
             non_queued_up.add(self.mid)
 
@@ -232,7 +231,7 @@ class TaskListener(TaskConfig):
             and config_dict["INCOMPLETE_TASK_NOTIFIER"]
             and DATABASE_URL
         ):
-            await DbManger().rm_complete_task(self.message.link)
+            await DbManager().rm_complete_task(self.message.link)
         msg = f"<b>Name: </b><code>{escape(self.name)}</code>\n\n<b>Size: </b>{get_readable_file_size(size)}"
         LOGGER.info(f"Task Done: {self.name}")
         if self.isLeech:
@@ -290,11 +289,7 @@ class TaskListener(TaskConfig):
                 if not rclonePath and dir_id:
                     INDEX_URL = ""
                     if self.privateLink:
-                        INDEX_URL = (
-                            self.user_dict["index_url"]
-                            if self.user_dict.get("index_url")
-                            else ""
-                        )
+                        INDEX_URL = self.userDict.get("index_url", "") or ""
                     elif config_dict["INDEX_URL"]:
                         INDEX_URL = config_dict["INDEX_URL"]
                     if INDEX_URL:
@@ -354,7 +349,7 @@ class TaskListener(TaskConfig):
             and config_dict["INCOMPLETE_TASK_NOTIFIER"]
             and DATABASE_URL
         ):
-            await DbManger().rm_complete_task(self.message.link)
+            await DbManager().rm_complete_task(self.message.link)
 
         async with queue_dict_lock:
             if self.mid in queued_dl:
@@ -390,7 +385,7 @@ class TaskListener(TaskConfig):
             and config_dict["INCOMPLETE_TASK_NOTIFIER"]
             and DATABASE_URL
         ):
-            await DbManger().rm_complete_task(self.message.link)
+            await DbManager().rm_complete_task(self.message.link)
 
         async with queue_dict_lock:
             if self.mid in queued_dl:

@@ -1,22 +1,22 @@
+from aiofiles.os import remove, path as aiopath
 from asyncio import sleep
 from time import time
-from aiofiles.os import remove as aioremove, path as aiopath
 
 from bot import aria2, task_dict_lock, task_dict, LOGGER, config_dict
-from bot.helper.mirror_utils.status_utils.aria2_status import Aria2Status
-from bot.helper.ext_utils.files_utils import clean_unwanted
 from bot.helper.ext_utils.bot_utils import (
     new_thread,
     bt_selection_buttons,
     sync_to_async,
 )
+from bot.helper.ext_utils.files_utils import clean_unwanted
+from bot.helper.ext_utils.status_utils import getTaskByGid
+from bot.helper.ext_utils.task_manager import stop_duplicate_check
+from bot.helper.mirror_utils.status_utils.aria2_status import Aria2Status
 from bot.helper.telegram_helper.message_utils import (
     sendMessage,
     deleteMessage,
     update_status_message,
 )
-from bot.helper.ext_utils.status_utils import getTaskByGid
-from bot.helper.ext_utils.task_manager import stop_duplicate_check
 
 
 @new_thread
@@ -102,7 +102,7 @@ async def _onBtDownloadComplete(api, gid):
                 f_path = file_o.path
                 if not file_o.selected and await aiopath.exists(f_path):
                     try:
-                        await aioremove(f_path)
+                        await remove(f_path)
                     except:
                         pass
             await clean_unwanted(download.dir)
@@ -147,7 +147,7 @@ async def _onBtDownloadComplete(api, gid):
 
 @new_thread
 async def _onDownloadStopped(api, gid):
-    await sleep(6)
+    await sleep(4)
     if task := await getTaskByGid(gid):
         await task.listener.onDownloadError("Dead torrent!")
 

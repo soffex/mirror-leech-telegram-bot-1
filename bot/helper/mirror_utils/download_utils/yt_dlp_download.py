@@ -1,15 +1,15 @@
-from os import path as ospath, listdir
-from secrets import token_urlsafe
 from logging import getLogger
-from yt_dlp import YoutubeDL, DownloadError
+from os import path as ospath, listdir
 from re import search as re_search
+from secrets import token_urlsafe
+from yt_dlp import YoutubeDL, DownloadError
 
 from bot import task_dict_lock, task_dict, non_queued_dl, queue_dict_lock
+from bot.helper.ext_utils.bot_utils import sync_to_async, async_to_sync
+from bot.helper.ext_utils.task_manager import check_running_tasks, stop_duplicate_check
+from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
 from bot.helper.telegram_helper.message_utils import sendStatusMessage
 from ..status_utils.yt_dlp_download_status import YtDlpDownloadStatus
-from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
-from bot.helper.ext_utils.bot_utils import sync_to_async, async_to_sync
-from bot.helper.ext_utils.task_manager import is_queued, stop_duplicate_check
 
 LOGGER = getLogger(__name__)
 
@@ -228,10 +228,10 @@ class YoutubeDLHelper:
             else:
                 self._ext = f".{audio_format}"
 
-        self.opts["format"] = qual
-
         if options:
             self._set_options(options)
+
+        self.opts["format"] = qual
 
         await sync_to_async(self.extractMetaData)
         if self._is_cancelled:
@@ -312,20 +312,24 @@ class YoutubeDLHelper:
             await self._listener.onDownloadError(msg, button)
             return
 
-        add_to_queue, event = await is_queued(self._listener.mid)
-        if add_to_queue:
-            LOGGER.info(f"Added to Queue/Download: {self._listener.name}")
-            async with task_dict_lock:
-                task_dict[self._listener.mid] = QueueStatus(
-                    self._listener, self._size, self._gid, "dl"
-                )
-            await event.wait()
-            async with task_dict_lock:
-                if self._listener.mid not in task_dict:
-                    return
-            LOGGER.info(f"Start Queued Download from YT_DLP: {self._listener.name}")
-            await self._onDownloadStart(True)
+        if not (self._listener.forceRun or self._listener.forceDownload):
+            add_to_queue, event = await check_running_tasks(self._listener.mid)
+            if add_to_queue:
+                LOGGER.info(f"Added to Queue/Download: {self._listener.name}")
+                async with task_dict_lock:
+                    task_dict[self._listener.mid] = QueueStatus(
+                        self._listener, self._size, self._gid, "dl"
+                    )
+                await event.wait()
+                async with task_dict_lock:
+                    if self._listener.mid not in task_dict:
+                        return
+                LOGGER.info(f"Start Queued Download from YT_DLP: {self._listener.name}")
+                await self._onDownloadStart(True)
         else:
+            add_to_queue = False
+
+        if not add_to_queue:
             LOGGER.info(f"Download with YT_DLP: {self._listener.name}")
 
         async with queue_dict_lock:
@@ -343,8 +347,6 @@ class YoutubeDLHelper:
         options = options.split("|")
         for opt in options:
             key, value = map(str.strip, opt.split(":", 1))
-            if key == "format" and value.startswith("ba/b-"):
-                continue
             if value.startswith("^"):
                 if "." in value or value == "^inf":
                     value = float(value.split("^", 1)[1])

@@ -1,14 +1,14 @@
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-from pyrogram.filters import command, regex, create
-from functools import partial
-from asyncio import create_subprocess_exec, create_subprocess_shell, sleep, gather
-from aiofiles.os import remove, rename, path as aiopath
 from aiofiles import open as aiopen
-from os import environ, getcwd
+from aiofiles.os import remove, rename, path as aiopath
+from aioshutil import rmtree
+from asyncio import create_subprocess_exec, create_subprocess_shell, sleep, gather
 from dotenv import load_dotenv
-from time import time
+from functools import partial
 from io import BytesIO
-from aioshutil import rmtree as aiormtree
+from os import environ, getcwd
+from pyrogram.filters import command, regex, create
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from time import time
 
 from bot import (
     config_dict,
@@ -20,7 +20,7 @@ from bot import (
     INDEX_URLS,
     aria2,
     GLOBAL_EXTENSION_FILTER,
-    Interval,
+    Intervals,
     aria2_options,
     aria2c_global,
     IS_PREMIUM_USER,
@@ -30,6 +30,18 @@ from bot import (
     LOGGER,
     bot,
 )
+from bot.helper.ext_utils.bot_utils import (
+    setInterval,
+    sync_to_async,
+    new_thread,
+)
+from bot.helper.ext_utils.db_handler import DbManager
+from bot.helper.ext_utils.jdownloader_booter import jdownloader
+from bot.helper.ext_utils.task_manager import start_from_queued
+from bot.helper.mirror_utils.rclone_utils.serve import rclone_serve_booter
+from bot.helper.telegram_helper.bot_commands import BotCommands
+from bot.helper.telegram_helper.button_build import ButtonMaker
+from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.telegram_helper.message_utils import (
     sendMessage,
     sendFile,
@@ -37,25 +49,17 @@ from bot.helper.telegram_helper.message_utils import (
     update_status_message,
     deleteMessage,
 )
-from bot.helper.telegram_helper.filters import CustomFilters
-from bot.helper.telegram_helper.bot_commands import BotCommands
-from bot.helper.telegram_helper.button_build import ButtonMaker
-from bot.helper.ext_utils.bot_utils import setInterval, sync_to_async, new_thread
-from bot.helper.ext_utils.db_handler import DbManger
-from bot.helper.ext_utils.task_manager import start_from_queued
-from bot.helper.mirror_utils.rclone_utils.serve import rclone_serve_booter
-from bot.modules.torrent_search import initiate_search_tools
 from bot.modules.rss import addJob
+from bot.modules.torrent_search import initiate_search_tools
 
 START = 0
 STATE = "view"
 handler_dict = {}
 default_values = {
-    "AUTO_DELETE_MESSAGE_DURATION": 30,
     "DOWNLOAD_DIR": "/usr/src/app/downloads/",
     "LEECH_SPLIT_SIZE": MAX_SPLIT_SIZE,
     "RSS_DELAY": 600,
-    "STATUS_UPDATE_INTERVAL": 10,
+    "STATUS_UPDATE_INTERVAL": 15,
     "SEARCH_LIMIT": 0,
     "UPSTREAM_BRANCH": "master",
     "DEFAULT_UPLOAD": "gd",
@@ -69,11 +73,49 @@ async def get_buttons(key=None, edit_type=None):
         buttons.ibutton("Private Files", "botset private")
         buttons.ibutton("Qbit Settings", "botset qbit")
         buttons.ibutton("Aria2c Settings", "botset aria")
+        buttons.ibutton("JDownloader Sync", "botset syncjd")
         buttons.ibutton("Close", "botset close")
         msg = "Bot Settings:"
+    elif edit_type is not None:
+        if edit_type == "botvar":
+            msg = ""
+            buttons.ibutton("Back", "botset var")
+            if key not in ["TELEGRAM_HASH", "TELEGRAM_API", "OWNER_ID", "BOT_TOKEN"]:
+                buttons.ibutton("Default", f"botset resetvar {key}")
+            buttons.ibutton("Close", "botset close")
+            if key in [
+                "SUDO_USERS",
+                "CMD_SUFFIX",
+                "OWNER_ID",
+                "USER_SESSION_STRING",
+                "TELEGRAM_HASH",
+                "TELEGRAM_API",
+                "AUTHORIZED_CHATS",
+                "DATABASE_URL",
+                "BOT_TOKEN",
+                "DOWNLOAD_DIR",
+            ]:
+                msg += "Restart required for this edit to take effect!\n\n"
+            msg += f"Send a valid value for {key}. Current value is '{config_dict[key]}'. Timeout: 60 sec"
+        elif edit_type == "ariavar":
+            buttons.ibutton("Back", "botset aria")
+            if key != "newkey":
+                buttons.ibutton("Default", f"botset resetaria {key}")
+                buttons.ibutton("Empty String", f"botset emptyaria {key}")
+            buttons.ibutton("Close", "botset close")
+            msg = (
+                "Send a key with value. Example: https-proxy-user:value"
+                if key == "newkey"
+                else f"Send a valid value for {key}. Current value is '{aria2_options[key]}'. Timeout: 60 sec"
+            )
+        elif edit_type == "qbitvar":
+            buttons.ibutton("Back", "botset qbit")
+            buttons.ibutton("Empty String", f"botset emptyqbit {key}")
+            buttons.ibutton("Close", "botset close")
+            msg = f"Send a valid value for {key}. Current value is '{qbit_options[key]}'. Timeout: 60 sec"
     elif key == "var":
         for k in list(config_dict.keys())[START : 10 + START]:
-            buttons.ibutton(k, f"botset editvar {k}")
+            buttons.ibutton(k, f"botset botvar {k}")
         if STATE == "view":
             buttons.ibutton("Edit", "botset edit var")
         else:
@@ -81,8 +123,10 @@ async def get_buttons(key=None, edit_type=None):
         buttons.ibutton("Back", "botset back")
         buttons.ibutton("Close", "botset close")
         for x in range(0, len(config_dict), 10):
-            buttons.ibutton(f"{int(x/10)}", f"botset start var {x}", position="footer")
-        msg = f"Config Variables | Page: {int(START/10)} | State: {STATE}"
+            buttons.ibutton(
+                f"{int(x / 10)}", f"botset start var {x}", position="footer"
+            )
+        msg = f"Config Variables | Page: {int(START / 10)} | State: {STATE}"
     elif key == "private":
         buttons.ibutton("Back", "botset back")
         buttons.ibutton("Close", "botset close")
@@ -92,20 +136,22 @@ Note: Changing .netrc will not take effect for aria2c until restart.
 Timeout: 60 sec"""
     elif key == "aria":
         for k in list(aria2_options.keys())[START : 10 + START]:
-            buttons.ibutton(k, f"botset editaria {k}")
+            buttons.ibutton(k, f"botset ariavar {k}")
         if STATE == "view":
             buttons.ibutton("Edit", "botset edit aria")
         else:
             buttons.ibutton("View", "botset view aria")
-        buttons.ibutton("Add new key", "botset editaria newkey")
+        buttons.ibutton("Add new key", "botset ariavar newkey")
         buttons.ibutton("Back", "botset back")
         buttons.ibutton("Close", "botset close")
         for x in range(0, len(aria2_options), 10):
-            buttons.ibutton(f"{int(x/10)}", f"botset start aria {x}", position="footer")
-        msg = f"Aria2c Options | Page: {int(START/10)} | State: {STATE}"
+            buttons.ibutton(
+                f"{int(x / 10)}", f"botset start aria {x}", position="footer"
+            )
+        msg = f"Aria2c Options | Page: {int(START / 10)} | State: {STATE}"
     elif key == "qbit":
         for k in list(qbit_options.keys())[START : 10 + START]:
-            buttons.ibutton(k, f"botset editqbit {k}")
+            buttons.ibutton(k, f"botset qbitvar {k}")
         if STATE == "view":
             buttons.ibutton("Edit", "botset edit qbit")
         else:
@@ -113,43 +159,10 @@ Timeout: 60 sec"""
         buttons.ibutton("Back", "botset back")
         buttons.ibutton("Close", "botset close")
         for x in range(0, len(qbit_options), 10):
-            buttons.ibutton(f"{int(x/10)}", f"botset start qbit {x}", position="footer")
-        msg = f"Qbittorrent Options | Page: {int(START/10)} | State: {STATE}"
-    elif edit_type == "editvar":
-        msg = ""
-        buttons.ibutton("Back", "botset back var")
-        if key not in ["TELEGRAM_HASH", "TELEGRAM_API", "OWNER_ID", "BOT_TOKEN"]:
-            buttons.ibutton("Default", f"botset resetvar {key}")
-        buttons.ibutton("Close", "botset close")
-        if key in [
-            "SUDO_USERS",
-            "CMD_SUFFIX",
-            "OWNER_ID",
-            "USER_SESSION_STRING",
-            "TELEGRAM_HASH",
-            "TELEGRAM_API",
-            "AUTHORIZED_CHATS",
-            "DATABASE_URL",
-            "BOT_TOKEN",
-            "DOWNLOAD_DIR",
-        ]:
-            msg += "Restart required for this edit to take effect!\n\n"
-        msg += f"Send a valid value for {key}. Timeout: 60 sec"
-    elif edit_type == "editaria":
-        buttons.ibutton("Back", "botset back aria")
-        if key != "newkey":
-            buttons.ibutton("Default", f"botset resetaria {key}")
-            buttons.ibutton("Empty String", f"botset emptyaria {key}")
-        buttons.ibutton("Close", "botset close")
-        if key == "newkey":
-            msg = "Send a key with value. Example: https-proxy-user:value"
-        else:
-            msg = f"Send a valid value for {key}. Timeout: 60 sec"
-    elif edit_type == "editqbit":
-        buttons.ibutton("Back", "botset back qbit")
-        buttons.ibutton("Empty String", f"botset emptyqbit {key}")
-        buttons.ibutton("Close", "botset close")
-        msg = f"Send a valid value for {key}. Timeout: 60 sec"
+            buttons.ibutton(
+                f"{int(x / 10)}", f"botset start qbit {x}", position="footer"
+            )
+        msg = f"Qbittorrent Options | Page: {int(START / 10)} | State: {STATE}"
     button = buttons.build_menu(1) if key is None else buttons.build_menu(2)
     return msg, button
 
@@ -167,10 +180,7 @@ async def edit_variable(_, message, pre_message, key):
     elif value.lower() == "false":
         value = False
         if key == "INCOMPLETE_TASK_NOTIFIER" and DATABASE_URL:
-            await DbManger().trunc_table("tasks")
-    elif key == "RSS_DELAY":
-        value = int(value)
-        addJob(value)
+            await DbManager().trunc_table("tasks")
     elif key == "DOWNLOAD_DIR":
         if not value.endswith("/"):
             value += "/"
@@ -179,10 +189,12 @@ async def edit_variable(_, message, pre_message, key):
             value = int(value)
     elif key == "STATUS_UPDATE_INTERVAL":
         value = int(value)
-        if len(task_dict) != 0 and Interval:
-            for key, intvl in list(Interval.items()):
+        if len(task_dict) != 0 and (st := Intervals["status"]):
+            for key, intvl in list(st.items()):
                 intvl.cancel()
-                Interval[key] = setInterval(value, update_status_message, key)
+                Intervals["status"][key] = setInterval(
+                    value, update_status_message, key
+                )
     elif key == "TORRENT_TIMEOUT":
         value = int(value)
         downloads = await sync_to_async(aria2.get_downloads)
@@ -229,7 +241,7 @@ async def edit_variable(_, message, pre_message, key):
     await update_buttons(pre_message, "var")
     await deleteMessage(message)
     if DATABASE_URL:
-        await DbManger().update_config({key: value})
+        await DbManager().update_config({key: value})
     if key in ["SEARCH_PLUGINS", "SEARCH_API_LINK"]:
         await initiate_search_tools()
     elif key in ["QUEUE_ALL", "QUEUE_DOWNLOAD", "QUEUE_UPLOAD"]:
@@ -241,6 +253,10 @@ async def edit_variable(_, message, pre_message, key):
         "RCLONE_SERVE_PASS",
     ]:
         await rclone_serve_booter()
+    elif key in ["JD_EMAIL", "JD_PASS"]:
+        jdownloader.initiate()
+    elif key == "RSS_DELAY":
+        addJob()
 
 
 async def edit_aria(_, message, pre_message, key):
@@ -268,7 +284,7 @@ async def edit_aria(_, message, pre_message, key):
     await update_buttons(pre_message, "aria")
     await deleteMessage(message)
     if DATABASE_URL:
-        await DbManger().update_aria2(key, value)
+        await DbManager().update_aria2(key, value)
 
 
 async def edit_qbit(_, message, pre_message, key):
@@ -287,7 +303,20 @@ async def edit_qbit(_, message, pre_message, key):
     await update_buttons(pre_message, "qbit")
     await deleteMessage(message)
     if DATABASE_URL:
-        await DbManger().update_qbittorrent(key, value)
+        await DbManager().update_qbittorrent(key, value)
+
+
+async def sync_jdownloader():
+    if DATABASE_URL and jdownloader.device is not None:
+        await sync_to_async(jdownloader.device.system.exit_jd)
+        if await aiopath.exists("cfg.zip"):
+            await remove("cfg.zip")
+        await sleep(5)
+        await (
+            await create_subprocess_exec("7z", "a", "cfg.zip", "/JDownloader/cfg")
+        ).wait()
+        await DbManager().update_private_file("cfg.zip")
+        await sync_to_async(jdownloader.connectToDevice)
 
 
 async def update_private_file(_, message, pre_message):
@@ -298,12 +327,12 @@ async def update_private_file(_, message, pre_message):
             await remove(fn)
         if fn == "accounts":
             if await aiopath.exists("accounts"):
-                await aiormtree("accounts")
+                await rmtree("accounts")
             if await aiopath.exists("rclone_sa"):
-                await aiormtree("rclone_sa")
+                await rmtree("rclone_sa")
             config_dict["USE_SERVICE_ACCOUNTS"] = False
             if DATABASE_URL:
-                await DbManger().update_config({"USE_SERVICE_ACCOUNTS": False})
+                await DbManager().update_config({"USE_SERVICE_ACCOUNTS": False})
         elif file_name in [".netrc", "netrc"]:
             await (await create_subprocess_exec("touch", ".netrc")).wait()
             await (await create_subprocess_exec("chmod", "600", ".netrc")).wait()
@@ -314,9 +343,9 @@ async def update_private_file(_, message, pre_message):
         await message.download(file_name=f"{getcwd()}/{file_name}")
         if file_name == "accounts.zip":
             if await aiopath.exists("accounts"):
-                await aiormtree("accounts")
+                await rmtree("accounts")
             if await aiopath.exists("rclone_sa"):
-                await aiormtree("rclone_sa")
+                await rmtree("rclone_sa")
             await (
                 await create_subprocess_exec(
                     "7z", "x", "-o.", "-aoa", "accounts.zip", "accounts/*.json"
@@ -364,7 +393,7 @@ async def update_private_file(_, message, pre_message):
         await rclone_serve_booter()
     await update_buttons(pre_message)
     if DATABASE_URL:
-        await DbManger().update_private_file(file_name)
+        await DbManager().update_private_file(file_name)
     if await aiopath.exists("accounts.zip"):
         await remove("accounts.zip")
 
@@ -397,31 +426,45 @@ async def event_handler(client, query, pfunc, rfunc, document=False):
 async def edit_bot_settings(client, query):
     data = query.data.split()
     message = query.message
+    handler_dict[message.chat.id] = False
     if data[1] == "close":
-        handler_dict[message.chat.id] = False
         await query.answer()
         await deleteMessage(message.reply_to_message)
         await deleteMessage(message)
     elif data[1] == "back":
-        handler_dict[message.chat.id] = False
         await query.answer()
-        key = data[2] if len(data) == 3 else None
-        if key is None:
-            globals()["START"] = 0
-        await update_buttons(message, key)
+        globals()["START"] = 0
+        await update_buttons(message, None)
+    elif data[1] == "syncjd":
+        if not config_dict["JD_EMAIL"] or not config_dict["JD_PASS"]:
+            await query.answer(
+                "No Email or Password provided!",
+                show_alert=True,
+            )
+            return
+        await query.answer(
+            "Syncronization Started. JDownloader will get restarted. It takes up to 5 sec!",
+            show_alert=True,
+        )
+        await sync_jdownloader()
     elif data[1] in ["var", "aria", "qbit"]:
         await query.answer()
         await update_buttons(message, data[1])
     elif data[1] == "resetvar":
-        handler_dict[message.chat.id] = False
         await query.answer()
         value = ""
         if data[2] in default_values:
             value = default_values[data[2]]
-            if data[2] == "STATUS_UPDATE_INTERVAL" and len(task_dict) != 0 and Interval:
-                for key, intvl in list(Interval.items()):
+            if (
+                data[2] == "STATUS_UPDATE_INTERVAL"
+                and len(task_dict) != 0
+                and (st := Intervals["status"])
+            ):
+                for key, intvl in list(st.items()):
                     intvl.cancel()
-                    Interval[key] = setInterval(value, update_status_message, key)
+                    Intervals["status"][key] = setInterval(
+                        value, update_status_message, key
+                    )
         elif data[2] == "EXTENSION_FILTER":
             GLOBAL_EXTENSION_FILTER.clear()
             GLOBAL_EXTENSION_FILTER.extend(["aria2", "!qB"])
@@ -439,7 +482,7 @@ async def edit_bot_settings(client, query):
                         LOGGER.error(e)
             aria2_options["bt-stop-timeout"] = "0"
             if DATABASE_URL:
-                await DbManger().update_aria2("bt-stop-timeout", "0")
+                await DbManager().update_aria2("bt-stop-timeout", "0")
         elif data[2] == "BASE_URL":
             await (await create_subprocess_exec("pkill", "-9", "-f", "gunicorn")).wait()
         elif data[2] == "BASE_URL_PORT":
@@ -460,11 +503,13 @@ async def edit_bot_settings(client, query):
             if DRIVES_NAMES and DRIVES_NAMES[0] == "Main":
                 INDEX_URLS[0] = ""
         elif data[2] == "INCOMPLETE_TASK_NOTIFIER" and DATABASE_URL:
-            await DbManger().trunc_table("tasks")
+            await DbManager().trunc_table("tasks")
+        elif data[2] in ["JD_EMAIL", "JD_PASS"]:
+            jdownloader.device = None
         config_dict[data[2]] = value
         await update_buttons(message, "var")
         if DATABASE_URL:
-            await DbManger().update_config({data[2]: value})
+            await DbManager().update_config({data[2]: value})
         if data[2] in ["SEARCH_PLUGINS", "SEARCH_API_LINK"]:
             await initiate_search_tools()
         elif data[2] in ["QUEUE_ALL", "QUEUE_DOWNLOAD", "QUEUE_UPLOAD"]:
@@ -477,7 +522,6 @@ async def edit_bot_settings(client, query):
         ]:
             await rclone_serve_booter()
     elif data[1] == "resetaria":
-        handler_dict[message.chat.id] = False
         aria2_defaults = await sync_to_async(aria2.client.get_global_option)
         if aria2_defaults[data[2]] == aria2_options[data[2]]:
             await query.answer("Value already same as you added in aria.sh!")
@@ -496,9 +540,8 @@ async def edit_bot_settings(client, query):
                 except Exception as e:
                     LOGGER.error(e)
         if DATABASE_URL:
-            await DbManger().update_aria2(data[2], value)
+            await DbManager().update_aria2(data[2], value)
     elif data[1] == "emptyaria":
-        handler_dict[message.chat.id] = False
         await query.answer()
         aria2_options[data[2]] = ""
         await update_buttons(message, "aria")
@@ -512,30 +555,27 @@ async def edit_bot_settings(client, query):
                 except Exception as e:
                     LOGGER.error(e)
         if DATABASE_URL:
-            await DbManger().update_aria2(data[2], "")
+            await DbManager().update_aria2(data[2], "")
     elif data[1] == "emptyqbit":
-        handler_dict[message.chat.id] = False
         await query.answer()
         await sync_to_async(get_client().app_set_preferences, {data[2]: value})
         qbit_options[data[2]] = ""
         await update_buttons(message, "qbit")
         if DATABASE_URL:
-            await DbManger().update_qbittorrent(data[2], "")
+            await DbManager().update_qbittorrent(data[2], "")
     elif data[1] == "private":
-        handler_dict[message.chat.id] = False
         await query.answer()
         await update_buttons(message, data[1])
         pfunc = partial(update_private_file, pre_message=message)
         rfunc = partial(update_buttons, message)
         await event_handler(client, query, pfunc, rfunc, True)
-    elif data[1] == "editvar" and STATE == "edit":
-        handler_dict[message.chat.id] = False
+    elif data[1] == "botvar" and STATE == "edit":
         await query.answer()
         await update_buttons(message, data[2], data[1])
         pfunc = partial(edit_variable, pre_message=message, key=data[2])
         rfunc = partial(update_buttons, message, "var")
         await event_handler(client, query, pfunc, rfunc)
-    elif data[1] == "editvar" and STATE == "view":
+    elif data[1] == "botvar" and STATE == "view":
         value = config_dict[data[2]]
         if len(str(value)) > 200:
             await query.answer()
@@ -546,14 +586,13 @@ async def edit_bot_settings(client, query):
         elif value == "":
             value = None
         await query.answer(f"{value}", show_alert=True)
-    elif data[1] == "editaria" and (STATE == "edit" or data[2] == "newkey"):
-        handler_dict[message.chat.id] = False
+    elif data[1] == "ariavar" and (STATE == "edit" or data[2] == "newkey"):
         await query.answer()
         await update_buttons(message, data[2], data[1])
         pfunc = partial(edit_aria, pre_message=message, key=data[2])
         rfunc = partial(update_buttons, message, "aria")
         await event_handler(client, query, pfunc, rfunc)
-    elif data[1] == "editaria" and STATE == "view":
+    elif data[1] == "ariavar" and STATE == "view":
         value = aria2_options[data[2]]
         if len(str(value)) > 200:
             await query.answer()
@@ -564,14 +603,13 @@ async def edit_bot_settings(client, query):
         elif value == "":
             value = None
         await query.answer(f"{value}", show_alert=True)
-    elif data[1] == "editqbit" and STATE == "edit":
-        handler_dict[message.chat.id] = False
+    elif data[1] == "qbitvar" and STATE == "edit":
         await query.answer()
         await update_buttons(message, data[2], data[1])
         pfunc = partial(edit_qbit, pre_message=message, key=data[2])
         rfunc = partial(update_buttons, message, "var")
         await event_handler(client, query, pfunc, rfunc)
-    elif data[1] == "editqbit" and STATE == "view":
+    elif data[1] == "qbitvar" and STATE == "view":
         value = qbit_options[data[2]]
         if len(str(value)) > 200:
             await query.answer()
@@ -691,11 +729,11 @@ async def load_config():
                 x = x.lstrip(".")
             GLOBAL_EXTENSION_FILTER.append(x.strip().lower())
 
-    MEGA_EMAIL = environ.get("MEGA_EMAIL", "")
-    MEGA_PASSWORD = environ.get("MEGA_PASSWORD", "")
-    if len(MEGA_EMAIL) == 0 or len(MEGA_PASSWORD) == 0:
-        MEGA_EMAIL = ""
-        MEGA_PASSWORD = ""
+    JD_EMAIL = environ.get("JD_EMAIL", "")
+    JD_PASS = environ.get("JD_PASS", "")
+    if len(JD_EMAIL) == 0 or len(JD_PASS) == 0:
+        JD_EMAIL = ""
+        JD_PASS = ""
 
     FILELION_API = environ.get("FILELION_API", "")
     if len(FILELION_API) == 0:
@@ -731,21 +769,15 @@ async def load_config():
 
     STATUS_UPDATE_INTERVAL = environ.get("STATUS_UPDATE_INTERVAL", "")
     if len(STATUS_UPDATE_INTERVAL) == 0:
-        STATUS_UPDATE_INTERVAL = 10
+        STATUS_UPDATE_INTERVAL = 15
     else:
         STATUS_UPDATE_INTERVAL = int(STATUS_UPDATE_INTERVAL)
-    if len(task_dict) != 0 and Interval:
-        for key, intvl in list(Interval.items()):
+    if len(task_dict) != 0 and (st := Intervals["status"]):
+        for key, intvl in list(st.items()):
             intvl.cancel()
-            Interval[key] = setInterval(
+            Intervals["status"][key] = setInterval(
                 STATUS_UPDATE_INTERVAL, update_status_message, key
             )
-
-    AUTO_DELETE_MESSAGE_DURATION = environ.get("AUTO_DELETE_MESSAGE_DURATION", "")
-    if len(AUTO_DELETE_MESSAGE_DURATION) == 0:
-        AUTO_DELETE_MESSAGE_DURATION = 30
-    else:
-        AUTO_DELETE_MESSAGE_DURATION = int(AUTO_DELETE_MESSAGE_DURATION)
 
     YT_DLP_OPTIONS = environ.get("YT_DLP_OPTIONS", "")
     if len(YT_DLP_OPTIONS) == 0:
@@ -789,7 +821,7 @@ async def load_config():
                     LOGGER.error(e)
         aria2_options["bt-stop-timeout"] = "0"
         if DATABASE_URL:
-            await DbManger().update_aria2("bt-stop-timeout", "0")
+            await DbManager().update_aria2("bt-stop-timeout", "0")
         TORRENT_TIMEOUT = ""
     else:
         for download in downloads:
@@ -804,7 +836,7 @@ async def load_config():
                     LOGGER.error(e)
         aria2_options["bt-stop-timeout"] = TORRENT_TIMEOUT
         if DATABASE_URL:
-            await DbManger().update_aria2("bt-stop-timeout", TORRENT_TIMEOUT)
+            await DbManager().update_aria2("bt-stop-timeout", TORRENT_TIMEOUT)
         TORRENT_TIMEOUT = int(TORRENT_TIMEOUT)
 
     QUEUE_ALL = environ.get("QUEUE_ALL", "")
@@ -819,7 +851,7 @@ async def load_config():
     INCOMPLETE_TASK_NOTIFIER = environ.get("INCOMPLETE_TASK_NOTIFIER", "")
     INCOMPLETE_TASK_NOTIFIER = INCOMPLETE_TASK_NOTIFIER.lower() == "true"
     if not INCOMPLETE_TASK_NOTIFIER and DATABASE_URL:
-        await DbManger().trunc_table("tasks")
+        await DbManager().trunc_table("tasks")
 
     STOP_DUPLICATE = environ.get("STOP_DUPLICATE", "")
     STOP_DUPLICATE = STOP_DUPLICATE.lower() == "true"
@@ -905,7 +937,6 @@ async def load_config():
         {
             "AS_DOCUMENT": AS_DOCUMENT,
             "AUTHORIZED_CHATS": AUTHORIZED_CHATS,
-            "AUTO_DELETE_MESSAGE_DURATION": AUTO_DELETE_MESSAGE_DURATION,
             "BASE_URL": BASE_URL,
             "BASE_URL_PORT": BASE_URL_PORT,
             "BOT_TOKEN": BOT_TOKEN,
@@ -920,12 +951,12 @@ async def load_config():
             "INCOMPLETE_TASK_NOTIFIER": INCOMPLETE_TASK_NOTIFIER,
             "INDEX_URL": INDEX_URL,
             "IS_TEAM_DRIVE": IS_TEAM_DRIVE,
+            "JD_EMAIL": JD_EMAIL,
+            "JD_PASS": JD_PASS,
             "LEECH_DUMP_CHAT": LEECH_DUMP_CHAT,
             "LEECH_FILENAME_PREFIX": LEECH_FILENAME_PREFIX,
             "LEECH_SPLIT_SIZE": LEECH_SPLIT_SIZE,
             "MEDIA_GROUP": MEDIA_GROUP,
-            "MEGA_EMAIL": MEGA_EMAIL,
-            "MEGA_PASSWORD": MEGA_PASSWORD,
             "OWNER_ID": OWNER_ID,
             "QUEUE_ALL": QUEUE_ALL,
             "QUEUE_DOWNLOAD": QUEUE_DOWNLOAD,
@@ -960,8 +991,9 @@ async def load_config():
     )
 
     if DATABASE_URL:
-        await DbManger().update_config(config_dict)
+        await DbManager().update_config(config_dict)
     await gather(initiate_search_tools(), start_from_queued(), rclone_serve_booter())
+    addJob()
 
 
 bot.add_handler(
