@@ -25,7 +25,7 @@ class TelegramDownloadHelper:
         self._start_time = time()
         self._listener = listener
         self._id = ""
-        self._is_cancelled = False
+        self.session = ""
 
     @property
     def speed(self):
@@ -35,13 +35,13 @@ class TelegramDownloadHelper:
     def processed_bytes(self):
         return self._processed_bytes
 
-    async def _onDownloadStart(self, size, file_id, from_queue):
+    async def _onDownloadStart(self, file_id, from_queue):
         async with global_lock:
             GLOBAL_GID.add(file_id)
         self._id = file_id
         async with task_dict_lock:
             task_dict[self._listener.mid] = TelegramStatus(
-                self._listener, self, size, file_id[:12], "dl"
+                self._listener, self, file_id[:12], "dl"
             )
         async with queue_dict_lock:
             non_queued_dl.add(self._listener.mid)
@@ -54,8 +54,8 @@ class TelegramDownloadHelper:
             LOGGER.info(f"Start Queued Download from Telegram: {self._listener.name}")
 
     async def _onDownloadProgress(self, current, total):
-        if self._is_cancelled:
-            if self._listener.session == "user":
+        if self._listener.isCancelled:
+            if self.session == "user":
                 user.stop_transmission()
             else:
                 bot.stop_transmission()
@@ -79,7 +79,7 @@ class TelegramDownloadHelper:
             download = await message.download(
                 file_name=path, progress=self._onDownloadProgress
             )
-            if self._is_cancelled:
+            if self._listener.isCancelled:
                 await self._onDownloadError("Cancelled by user!")
                 return
         except Exception as e:
@@ -88,20 +88,18 @@ class TelegramDownloadHelper:
             return
         if download is not None:
             await self._onDownloadComplete()
-        elif not self._is_cancelled:
+        elif not self._listener.isCancelled:
             await self._onDownloadError("Internal error occurred")
 
-    async def add_download(self, message, path):
-        if (
-            self._listener.session not in ["user", "bot"]
-            and self._listener.userTransmission
-        ):
-            self._listener.session = "user"
+    async def add_download(self, message, path, session):
+        self.session = session
+        if self.session not in ["user", "bot"] and self._listener.userTransmission:
+            self.session = "user"
             message = await user.get_messages(
                 chat_id=message.chat.id, message_ids=message.id
             )
-        elif self._listener.session != "user":
-            self._listener.session = "bot"
+        elif self.session != "user":
+            self.session = "bot"
 
         media = (
             message.document
@@ -126,7 +124,7 @@ class TelegramDownloadHelper:
                     )
                 else:
                     path = path + self._listener.name
-                size = media.file_size
+                self._listener.size = media.file_size
                 gid = media.file_unique_id
 
                 msg, button = await stop_duplicate_check(self._listener)
@@ -140,18 +138,17 @@ class TelegramDownloadHelper:
                         LOGGER.info(f"Added to Queue/Download: {self._listener.name}")
                         async with task_dict_lock:
                             task_dict[self._listener.mid] = QueueStatus(
-                                self._listener, size, gid, "dl"
+                                self._listener, gid, "dl"
                             )
                         await self._listener.onDownloadStart()
                         if self._listener.multi <= 1:
                             await sendStatusMessage(self._listener.message)
                         await event.wait()
-                        async with task_dict_lock:
-                            if self._listener.mid not in task_dict:
-                                return
+                        if self._listener.isCancelled:
+                            return
                 else:
                     add_to_queue = False
-                await self._onDownloadStart(size, gid, add_to_queue)
+                await self._onDownloadStart(gid, add_to_queue)
                 await self._download(message, path)
             else:
                 await self._onDownloadError("File already being downloaded!")
@@ -161,7 +158,7 @@ class TelegramDownloadHelper:
             )
 
     async def cancel_task(self):
-        self._is_cancelled = True
+        self._listener.isCancelled = True
         LOGGER.info(
             f"Cancelling download on user request: name: {self._listener.name} id: {self._id}"
         )

@@ -4,7 +4,7 @@ from time import time
 from bot import (
     task_dict,
     task_dict_lock,
-    get_client,
+    get_qb_client,
     LOGGER,
     config_dict,
     non_queued_dl,
@@ -40,7 +40,7 @@ def _get_hash_file(fpath):
 
 
 async def add_qb_torrent(listener, path, ratio, seed_time):
-    client = await sync_to_async(get_client)
+    client = await sync_to_async(get_qb_client)
     ADD_TIME = time()
     try:
         url = listener.link
@@ -133,10 +133,9 @@ async def add_qb_torrent(listener, path, ratio, seed_time):
 
         if add_to_queue:
             await event.wait()
-
+            if listener.isCancelled:
+                return
             async with task_dict_lock:
-                if listener.mid not in task_dict:
-                    return
                 task_dict[listener.mid].queued = False
 
             await sync_to_async(client.torrents_resume, torrent_hashes=ext_hash)

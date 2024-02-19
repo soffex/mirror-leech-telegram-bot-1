@@ -44,7 +44,11 @@ async def add_rclone_download(listener, path):
     res1, res2 = await gather(cmd_exec(cmd1), cmd_exec(cmd2))
     if res1[2] != res2[2] != 0:
         if res1[2] != -9:
-            err = res1[1] or res2[1]
+            err = (
+                res1[1]
+                or res2[1]
+                or "Use '/shell cat rlog.txt' to see more information"
+            )
             msg = f"Error: While getting rclone stat/size. Path: {remote}:{listener.link}. Stderr: {err[:4000]}"
             await listener.onDownloadError(msg)
         return
@@ -52,6 +56,8 @@ async def add_rclone_download(listener, path):
         rstat = loads(res1[0])
         rsize = loads(res2[0])
     except Exception as err:
+        if not str(err):
+            err = "Use '/shell cat rlog.txt' to see more information"
         await listener.onDownloadError(f"RcloneDownload JsonLoad: {err}")
         return
     if rstat["IsDir"]:
@@ -62,7 +68,7 @@ async def add_rclone_download(listener, path):
         path += listener.name
     else:
         listener.name = listener.link.rsplit("/", 1)[-1]
-    size = rsize["bytes"]
+    listener.size = rsize["bytes"]
     gid = token_urlsafe(12)
 
     msg, button = await stop_duplicate_check(listener)
@@ -75,14 +81,13 @@ async def add_rclone_download(listener, path):
         if add_to_queue:
             LOGGER.info(f"Added to Queue/Download: {listener.name}")
             async with task_dict_lock:
-                task_dict[listener.mid] = QueueStatus(listener, size, gid, "dl")
+                task_dict[listener.mid] = QueueStatus(listener, gid, "dl")
             await listener.onDownloadStart()
             if listener.multi <= 1:
                 await sendStatusMessage(listener.message)
             await event.wait()
-            async with task_dict_lock:
-                if listener.mid not in task_dict:
-                    return
+            if listener.isCancelled:
+                return
     else:
         add_to_queue = False
 

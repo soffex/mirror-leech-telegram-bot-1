@@ -22,7 +22,7 @@ async def add_direct_download(listener, path):
     if not (contents := details.get("contents")):
         await listener.onDownloadError("There is nothing to download!")
         return
-    size = details["total_size"]
+    listener.size = details["total_size"]
 
     if not listener.name:
         listener.name = details["title"]
@@ -39,14 +39,13 @@ async def add_direct_download(listener, path):
         if add_to_queue:
             LOGGER.info(f"Added to Queue/Download: {listener.name}")
             async with task_dict_lock:
-                task_dict[listener.mid] = QueueStatus(listener, size, gid, "dl")
+                task_dict[listener.mid] = QueueStatus(listener, gid, "dl")
             await listener.onDownloadStart()
             if listener.multi <= 1:
                 await sendStatusMessage(listener.message)
             await event.wait()
-            async with task_dict_lock:
-                if listener.mid not in task_dict:
-                    return
+            if listener.isCancelled:
+                return
     else:
         add_to_queue = False
 
@@ -56,7 +55,7 @@ async def add_direct_download(listener, path):
         a2c_opt["header"] = header
     a2c_opt["follow-torrent"] = "false"
     a2c_opt["follow-metalink"] = "false"
-    directListener = DirectListener(size, path, listener, a2c_opt)
+    directListener = DirectListener(path, listener, a2c_opt)
     async with task_dict_lock:
         task_dict[listener.mid] = DirectStatus(listener, directListener, gid)
 

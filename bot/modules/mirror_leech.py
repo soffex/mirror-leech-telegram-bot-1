@@ -131,6 +131,7 @@ class Mirror(TaskListener):
         seed_time = None
         reply_to = None
         file_ = None
+        session = ""
 
         try:
             self.multi = int(args["-i"])
@@ -185,7 +186,7 @@ class Mirror(TaskListener):
                 self.link = reply_to.text.split("\n", 1)[0].strip()
         if is_telegram_link(self.link):
             try:
-                reply_to, self.session = await get_tg_link_message(self.link)
+                reply_to, session = await get_tg_link_message(self.link)
             except Exception as e:
                 await sendMessage(self.message, f"ERROR: {e}")
                 self.removeFromSameDir()
@@ -254,6 +255,7 @@ class Mirror(TaskListener):
             and not await aiopath.exists(self.link)
             and not is_rclone_path(self.link)
             and not is_gdrive_id(self.link)
+            and not is_gdrive_link(self.link)
         ):
             await sendMessage(
                 self.message, COMMAND_USAGE["mirror"][0], COMMAND_USAGE["mirror"][1]
@@ -299,7 +301,7 @@ class Mirror(TaskListener):
                         return
 
         if file_ is not None:
-            await TelegramDownloadHelper(self).add_download(reply_to, f"{path}/")
+            await TelegramDownloadHelper(self).add_download(reply_to, f"{path}/", session)
         elif isinstance(self.link, dict):
             await add_direct_download(self, path)
         elif self.isJd:
@@ -309,12 +311,12 @@ class Mirror(TaskListener):
                 await sendMessage(self.message, f"{e}".strip())
                 self.removeFromSameDir()
                 return
+        elif self.isQbit:
+            await add_qb_torrent(self, path, ratio, seed_time)
         elif is_rclone_path(self.link):
             await add_rclone_download(self, f"{path}/")
         elif is_gdrive_link(self.link) or is_gdrive_id(self.link):
             await add_gd_download(self, path)
-        elif self.isQbit:
-            await add_qb_torrent(self, path, ratio, seed_time)
         else:
             ussr = args["-au"]
             pssw = args["-ap"]
