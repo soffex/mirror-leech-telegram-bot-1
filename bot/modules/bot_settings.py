@@ -46,7 +46,7 @@ from bot.helper.ext_utils.bot_utils import (
 from bot.helper.ext_utils.db_handler import DbManager
 from bot.helper.ext_utils.jdownloader_booter import jdownloader
 from bot.helper.ext_utils.task_manager import start_from_queued
-from bot.helper.mirror_utils.rclone_utils.serve import rclone_serve_booter
+from bot.helper.mirror_leech_utils.rclone_utils.serve import rclone_serve_booter
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.telegram_helper.filters import CustomFilters
@@ -315,23 +315,24 @@ async def edit_qbit(_, message, pre_message, key):
 
 
 async def sync_jdownloader():
-    if DATABASE_URL and jdownloader.device is not None:
-        await jdownloader.device.system.exit_jd()
-        if await aiopath.exists("cfg.zip"):
-            await remove("cfg.zip")
-        await sleep(6)
-        await (
-            await create_subprocess_exec("7z", "a", "cfg.zip", "/JDownloader/cfg")
-        ).wait()
-        await DbManager().update_private_file("cfg.zip")
-        try:
-            await wait_for(retry_function(jdownloader.update_devices), timeout=5)
-        except:
-            is_connected = await jdownloader.jdconnect()
-            if not is_connected:
-                LOGGER.error(jdownloader.error)
-                return
-        await jdownloader.connectToDevice()
+    if not DATABASE_URL or jdownloader.device is None:
+        return
+    await jdownloader.device.system.exit_jd()
+    if await aiopath.exists("cfg.zip"):
+        await remove("cfg.zip")
+    try:
+        await wait_for(retry_function(jdownloader.update_devices), timeout=10)
+    except:
+        is_connected = await jdownloader.jdconnect()
+        if not is_connected:
+            LOGGER.error(jdownloader.error)
+            return
+    jdownloader.boot()
+    await jdownloader.connectToDevice()
+    await (
+        await create_subprocess_exec("7z", "a", "cfg.zip", "/JDownloader/cfg")
+    ).wait()
+    await DbManager().update_private_file("cfg.zip")
 
 
 async def update_private_file(_, message, pre_message):
@@ -527,6 +528,8 @@ async def edit_bot_settings(client, query):
             await DbManager().trunc_table("tasks")
         elif data[2] in ["JD_EMAIL", "JD_PASS"]:
             jdownloader.device = None
+            jdownloader.error = "JDownloader Credentials not provided!"
+            await create_subprocess_exec(["pkill", "-9", "-f", "java"])
         config_dict[data[2]] = value
         await update_buttons(message, "var")
         if DATABASE_URL:
@@ -916,6 +919,12 @@ async def load_config():
     if len(RCLONE_SERVE_PASS) == 0:
         RCLONE_SERVE_PASS = ""
 
+    NAME_SUBSTITUTE = environ.get("NAME_SUBSTITUTE", "")
+    NAME_SUBSTITUTE = "" if len(NAME_SUBSTITUTE) == 0 else NAME_SUBSTITUTE
+
+    MIXED_LEECH = environ.get("MIXED_LEECH", "")
+    MIXED_LEECH = MIXED_LEECH.lower() == "true" and IS_PREMIUM_USER
+
     await (await create_subprocess_exec("pkill", "-9", "-f", "gunicorn")).wait()
     BASE_URL = environ.get("BASE_URL", "").rstrip("/")
     if len(BASE_URL) == 0:
@@ -978,6 +987,8 @@ async def load_config():
             "LEECH_FILENAME_PREFIX": LEECH_FILENAME_PREFIX,
             "LEECH_SPLIT_SIZE": LEECH_SPLIT_SIZE,
             "MEDIA_GROUP": MEDIA_GROUP,
+            "MIXED_LEECH": MIXED_LEECH,
+            "NAME_SUBSTITUTE": NAME_SUBSTITUTE,
             "OWNER_ID": OWNER_ID,
             "QUEUE_ALL": QUEUE_ALL,
             "QUEUE_DOWNLOAD": QUEUE_DOWNLOAD,

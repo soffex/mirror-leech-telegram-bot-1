@@ -17,7 +17,7 @@ from bot.helper.ext_utils.bot_utils import (
 from bot.helper.ext_utils.links_utils import is_url
 from bot.helper.ext_utils.status_utils import get_readable_file_size, get_readable_time
 from bot.helper.listeners.task_listener import TaskListener
-from bot.helper.mirror_utils.download_utils.yt_dlp_download import YoutubeDLHelper
+from bot.helper.mirror_leech_utils.download_utils.yt_dlp_download import YoutubeDLHelper
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.telegram_helper.filters import CustomFilters
@@ -289,7 +289,7 @@ class YtDlp(TaskListener):
         input_list = text[0].split(" ")
         qual = ""
 
-        arg_base = {
+        args = {
             "-s": False,
             "-b": False,
             "-z": False,
@@ -298,6 +298,7 @@ class YtDlp(TaskListener):
             "-f": False,
             "-fd": False,
             "-fu": False,
+            "-ml": False,
             "-i": 0,
             "-sp": 0,
             "link": "",
@@ -309,9 +310,10 @@ class YtDlp(TaskListener):
             "-t": "",
             "-ca": "",
             "-cv": "",
+            "-ns": "",
         }
 
-        args = arg_parser(input_list[1:], arg_base)
+        arg_parser(input_list[1:], args)
 
         try:
             self.multi = int(args["-i"])
@@ -333,6 +335,8 @@ class YtDlp(TaskListener):
         self.forceUpload = args["-fu"]
         self.convertAudio = args["-ca"]
         self.convertVideo = args["-cv"]
+        self.nameSub = args["-ns"]
+        self.mixedLeech = args["-ml"]
 
         isBulk = args["-b"]
         folder_name = args["-m"]

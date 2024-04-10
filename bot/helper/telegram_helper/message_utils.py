@@ -61,20 +61,13 @@ async def sendFile(message, file, caption=None):
 
 async def sendRss(text):
     try:
-        if user:
-            return await user.send_message(
-                chat_id=config_dict["RSS_CHAT"],
-                text=text,
-                disable_web_page_preview=True,
-                disable_notification=True,
-            )
-        else:
-            return await bot.send_message(
-                chat_id=config_dict["RSS_CHAT"],
-                text=text,
-                disable_web_page_preview=True,
-                disable_notification=True,
-            )
+        app = user or bot
+        return await app.send_message(
+            chat_id=config_dict["RSS_CHAT"],
+            text=text,
+            disable_web_page_preview=True,
+            disable_notification=True,
+        )
     except FloodWait as f:
         LOGGER.warning(str(f))
         await sleep(f.value * 1.2)
@@ -103,8 +96,8 @@ async def delete_status():
     async with task_dict_lock:
         for key, data in list(status_dict.items()):
             try:
-                del status_dict[key]
                 await deleteMessage(data["message"])
+                del status_dict[key]
             except Exception as e:
                 LOGGER.error(str(e))
 

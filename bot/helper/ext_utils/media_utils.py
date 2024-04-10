@@ -5,6 +5,7 @@ from asyncio.subprocess import PIPE
 from os import path as ospath, cpu_count
 from re import search as re_search
 from time import time
+from aioshutil import rmtree
 
 from bot import LOGGER, subprocess_lock
 from bot.helper.ext_utils.bot_utils import cmd_exec
@@ -50,6 +51,10 @@ async def convert_video(listener, video_file, ext, retry=False):
         return False
     else:
         if not retry:
+            if await aiopath.exists(output):
+                await remove(output)
+            return await convert_video(listener, video_file, ext, True)
+        else:
             try:
                 stderr = stderr.decode().strip()
             except:
@@ -57,9 +62,6 @@ async def convert_video(listener, video_file, ext, retry=False):
             LOGGER.error(
                 f"{stderr}. Something went wrong while converting video, mostly file need specific codec. Path: {video_file}"
             )
-            if await aiopath.exists(output):
-                await remove(output)
-            return await convert_video(listener, video_file, ext, True)
     return False
 
 
@@ -222,21 +224,19 @@ async def get_document_type(path):
     return is_video, is_audio, is_image
 
 
-async def take_ss(video_file, ss_nb) -> list:
+async def take_ss(video_file, ss_nb) -> bool:
     ss_nb = min(ss_nb, 10)
     duration = (await get_media_info(video_file))[0]
     if duration != 0:
         dirpath, name = video_file.rsplit("/", 1)
         name, _ = ospath.splitext(name)
-        dirpath = f"{dirpath}/screenshots/"
+        dirpath = f"{dirpath}/{name}_mltbss/"
         await makedirs(dirpath, exist_ok=True)
         interval = duration // (ss_nb + 1)
         cap_time = interval
-        outputs = []
         cmds = []
         for i in range(ss_nb):
             output = f"{dirpath}SS.{name}_{i:02}.png"
-            outputs.append(output)
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
@@ -255,21 +255,24 @@ async def take_ss(video_file, ss_nb) -> list:
             cap_time += interval
             cmds.append(cmd_exec(cmd))
         try:
-            resutls = await wait_for(gather(*cmds), timeout=15)
+            resutls = await wait_for(gather(*cmds), timeout=60)
             if resutls[0][2] != 0:
                 LOGGER.error(
                     f"Error while creating sreenshots from video. Path: {video_file}. stderr: {resutls[0][1]}"
                 )
-                return []
+                await rmtree(dirpath, ignore_errors=True)
+                return False
         except:
             LOGGER.error(
                 f"Error while creating sreenshots from video. Path: {video_file}. Error: Timeout some issues with ffmpeg with specific arch!"
             )
-            return []
-        return outputs
+            await rmtree(dirpath, ignore_errors=True)
+            return False
+        return dirpath
     else:
         LOGGER.error("take_ss: Can't get the duration of video")
-        return []
+        await rmtree(dirpath, ignore_errors=True)
+        return False
 
 
 async def get_audio_thumb(audio_file):
@@ -322,7 +325,7 @@ async def create_thumbnail(video_file, duration):
         des_dir,
     ]
     try:
-        _, err, code = await wait_for(cmd_exec(cmd), timeout=15)
+        _, err, code = await wait_for(cmd_exec(cmd), timeout=60)
         if code != 0 or not await aiopath.exists(des_dir):
             LOGGER.error(
                 f"Error while extracting thumbnail from video. Name: {video_file} stderr: {err}"
