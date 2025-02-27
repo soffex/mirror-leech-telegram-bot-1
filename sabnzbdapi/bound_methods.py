@@ -1,15 +1,8 @@
 class SubFunctions:
 
-    def __init__(self):
-        pass
-
     async def check_login(self):
         res = await self.get_config("servers")
-        if res["config"]:
-            self.LOGGED_IN = True
-            return res["config"]
-        else:
-            return False
+        return res["config"] or False
 
     async def add_server(self, server: dict):
         """server = {
